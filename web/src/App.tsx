@@ -46,6 +46,7 @@ import { ReviewModal } from "@/components/ReviewModal";
 
 export default function App() {
   const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("aa_baseUrl") || "http://127.0.0.1:8000");
+  const [apiToken, setApiToken] = useState(() => localStorage.getItem("aa_apiToken") || "");
   const [runs, setRuns] = useState<string[]>([]);
   const [runId, setRunId] = useState<string>("");
   const [runsMeta, setRunsMeta] = useState<RunMeta[]>([]);
@@ -94,6 +95,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("aa_baseUrl", baseUrl);
   }, [baseUrl]);
+
+  useEffect(() => {
+    localStorage.setItem("aa_apiToken", apiToken);
+  }, [apiToken]);
 
   useEffect(() => {
     if (!reviewOpen) return;
@@ -893,7 +898,7 @@ export default function App() {
     <div className="min-h-screen bg-background text-foreground p-4 font-sans antialiased">
       <div className="w-full px-4 space-y-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight">Auto Accounting</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">OpenLedger</h1>
           <div className="flex items-center gap-4">
             <span className="text-xs text-muted-foreground font-mono">{runId || "No Run Selected"}</span>
             {runName ? (
@@ -913,6 +918,16 @@ export default function App() {
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               className="w-[200px] h-8 font-mono text-xs"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">Token</span>
+            <Input
+              value={apiToken}
+              onChange={(e) => setApiToken(e.target.value)}
+              placeholder="(optional)"
+              type="password"
+              className="w-[180px] h-8 font-mono text-xs"
             />
           </div>
           <Separator orientation="vertical" className="h-6" />

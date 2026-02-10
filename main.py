@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def main() -> None:
-    from workflow_ui.server import main as server_main
+    from openledger.server import main as server_main
 
     server_main()
 

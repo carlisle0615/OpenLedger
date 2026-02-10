@@ -9,6 +9,11 @@
 - `bills/`、`output/`、`runs/`、`tmp/`（账单与产物）
 - `config/classifier.local.json`（个人规则）
 
+### 文档
+
+- 架构说明：`docs/architecture.md`
+- 方案思路：`docs/strategy.zh-CN.md`
+
 ### 推荐：Workflow UI（导入/查看每阶段输出/审核）
 
 1) 启动后端（会自动打开浏览器到 `http://127.0.0.1:8000`）：
@@ -37,7 +42,7 @@ pnpm dev
 >
 > 调整了 `ignore_rules` / `regex_category_rules` 后，建议在 UI 里点「重置分类产物」再重新跑 `classify`，确保新规则生效。
 >
-> 后端会用 `loguru`（若未安装会降级为简单输出）打印当前执行到哪个 stage；可用 `AUTO_ACCOUNTING_LOG_LEVEL=DEBUG` 提升日志详细度。
+> 后端会用 `loguru`（若未安装会降级为简单输出）打印当前执行到哪个 stage；可用 `OPENLEDGER_LOG_LEVEL=DEBUG` 提升日志详细度。
 
 ### 环境
 
@@ -50,7 +55,7 @@ uv sync
 
 ### 把导出文件放到项目根目录
 
-当前脚本已对以下导出格式做了适配（你这次的样本已验证可解析）：
+当前脚本已对以下导出格式做了适配：
 
 - 微信：`微信支付账单流水文件*.xlsx`
 - 支付宝：`支付宝交易明细*.csv`

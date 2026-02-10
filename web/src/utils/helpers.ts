@@ -14,7 +14,10 @@ export function fmtStatus(s: string) {
 
 // API 请求封装
 export async function api<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`${baseUrl}${path}`, init);
+    const token = localStorage.getItem("aa_apiToken") || "";
+    const headers = new Headers(init?.headers || undefined);
+    if (token.trim()) headers.set("X-OpenLedger-Token", token.trim());
+    const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
     if (!res.ok) {
         const txt = await res.text();
         throw new Error(`HTTP ${res.status}: ${txt.slice(0, 3000)}`);
