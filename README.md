@@ -30,7 +30,7 @@ OpenLedger 采用 **File as State**：你把 PDF/CSV/XLSX 导出放进输入目�
 
 ## 特性
 
-- 本地处理：不联网、不上传，适合账单隐私场景
+- 本地处理为主：LLM 分类可选，开启后会联网调用你配置的 LSP
 - 结构化流水线：每个阶段都有可追溯的输入、输出与日志
 - PDF 解析模式：支持 `auto` 自动识别与扩展解析器
 - 多源回填：信用卡/借记卡账单与微信/支付宝明细交叉匹配
@@ -102,6 +102,7 @@ PDF 解析模式：
 - 分类规则放在 `config/classifier.json`
 - 推荐本地覆盖 `config/classifier.local.json`（避免误提交）
 - 需要 `OPENROUTER_API_KEY`（参考 `.env.example`）
+- LSP 可自配：默认示例脚本基于 OpenRouter，可替换 `stages/classify_openrouter.mjs` 接入你的 LSP
 
 ## 输出产物（摘要）
 
