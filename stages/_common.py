@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""脚本公共工具（统一日志与 CLI 风格）。"""
+"""阶段公共工具（统一日志与 CLI 风格）。"""
 
 import argparse
 from pathlib import Path

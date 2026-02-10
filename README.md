@@ -67,7 +67,7 @@ uv sync
 1) **提取 PDF 交易明细**（信用卡 + 交易流水）
 
 ```bash
-uv run python scripts/extract_pdf_transactions.py --mode auto *.pdf
+uv run python -m stages.extract_pdf --mode auto *.pdf
 ```
 
 可选：
@@ -77,25 +77,25 @@ uv run python scripts/extract_pdf_transactions.py --mode auto *.pdf
 2) **解析并标准化微信/支付宝导出**
 
 ```bash
-uv run python scripts/extract_payment_exports.py
+uv run python -m stages.extract_exports
 ```
 
 3) **信用卡账单 ↔ 微信/支付宝 明细匹配回填**
 
 ```bash
-uv run python scripts/match_credit_card_details.py
+uv run python -m stages.match_credit_card
 ```
 
 4) **借记卡流水 ↔ 微信/支付宝 明细匹配回填（含退款）**
 
 ```bash
-uv run python scripts/match_bank_statement_details.py
+uv run python -m stages.match_bank
 ```
 
 5) **生成统一抽象字段输出（单文件）**
 
 ```bash
-uv run python scripts/build_unified_output.py
+uv run python -m stages.build_unified
 ```
 
 6) **LLM 分类（可配置，支持批处理 + 人工复核）**
@@ -107,7 +107,7 @@ uv run python scripts/build_unified_output.py
 运行分类（默认 `batch_size=10`）：
 
 ```bash
-node scripts/classify_unified_openrouter.mjs
+node stages/classify_openrouter.mjs
 ```
 
 分类脚本会生成：
@@ -117,15 +117,15 @@ node scripts/classify_unified_openrouter.mjs
 当你把 `review.csv` 审核完后，生成最终「带分类明细 + 聚合结果」：
 
 ```bash
-uv run python scripts/finalize_classification.py
+uv run python -m stages.finalize
 ```
 
 ### 忽略列（可选）
 
 - **不把某些列发送给 LLM**（例如隐私字段）：  
-  `node scripts/classify_unified_openrouter.mjs --ignore-cols remark,sources`
+  `node stages/classify_openrouter.mjs --ignore-cols remark,sources`
 - **最终明细输出里删除某些列**：  
-  `uv run python scripts/finalize_classification.py --drop-cols trade_time,post_date`
+  `uv run python -m stages.finalize --drop-cols trade_time,post_date`
 
 ### 输出文件
 
@@ -176,7 +176,7 @@ uv run python scripts/finalize_classification.py
 如果你想肉眼核对 PDF 版式/表格提取效果：
 
 ```bash
-uv run python scripts/probe_pdf.py <你的pdf路径> --max-pages 2 --render-pages 1
+uv run python -m tools.probe_pdf <你的pdf路径> --max-pages 2 --render-pages 1
 ```
 
 渲染图片会落在 `tmp/pdfs/`。

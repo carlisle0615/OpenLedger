@@ -9,7 +9,7 @@
 - `<out-dir>/alipay.normalized.csv`
 
 示例：
-- `uv run python scripts/extract_payment_exports.py --out-dir output`
+- `uv run python -m stages.extract_exports --out-dir output`
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from _common import log, make_parser
+from ._common import log, make_parser
 
 
 def _to_decimal_amount(value: str) -> Decimal:

@@ -7,26 +7,20 @@
 - `<out-dir>/*.transactions.csv`
 
 示例：
-- `uv run python scripts/extract_pdf_transactions.py --out-dir output *.pdf`
-- `uv run python scripts/extract_pdf_transactions.py --mode cmb --out-dir output *.pdf`
-- `uv run python scripts/extract_pdf_transactions.py --list-modes`
+- `uv run python -m stages.extract_pdf --out-dir output *.pdf`
+- `uv run python -m stages.extract_pdf --mode cmb --out-dir output *.pdf`
+- `uv run python -m stages.extract_pdf --list-modes`
 """
 
 from __future__ import annotations
 
 import csv
-import sys
 from pathlib import Path
 from typing import Iterable
 
 import pdfplumber
 
-from _common import log, make_parser
-
-# 允许直接 `python scripts/xxx.py` 运行时也能 import openledger 包（不要求 pip 安装）。
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from ._common import log, make_parser
 
 from openledger.parsers.pdf import (  # noqa: E402
     PdfParser,
@@ -95,7 +89,7 @@ def main() -> None:
         raise SystemExit(
             f"未知 --mode: {args.mode}\n"
             f"支持的 --mode: {', '.join([str(x) for x in supported])}\n"
-            "可用 `uv run python scripts/extract_pdf_transactions.py --list-modes` 查看详细列表。\n"
+            "可用 `uv run python -m stages.extract_pdf --list-modes` 查看详细列表。\n"
         ) from exc
 
     errors: list[str] = []
@@ -152,7 +146,7 @@ def main() -> None:
         log("extract_pdf", "支持的 --mode 列表：")
         for line in _mode_help_lines():
             log("extract_pdf", line)
-        log("extract_pdf", "排查建议：先用 `uv run python scripts/probe_pdf.py <pdf路径>` 查看第一页是否能抽到文本。")
+        log("extract_pdf", "排查建议：先用 `uv run python -m tools.probe_pdf <pdf路径>` 查看第一页是否能抽到文本。")
         raise SystemExit(2)
 
 

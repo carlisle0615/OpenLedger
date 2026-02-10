@@ -490,7 +490,8 @@ class WorkflowRunner:
             cmd = [
                 py,
                 "-u",
-                str(root / "scripts" / "extract_pdf_transactions.py"),
+                "-m",
+                "stages.extract_pdf",
                 "--out-dir",
                 str(paths.out_dir),
                 "--mode",
@@ -513,7 +514,8 @@ class WorkflowRunner:
             cmd = [
                 py,
                 "-u",
-                str(root / "scripts" / "extract_payment_exports.py"),
+                "-m",
+                "stages.extract_exports",
                 "--out-dir",
                 str(paths.out_dir),
             ]
@@ -541,7 +543,8 @@ class WorkflowRunner:
             cmd = [
                 py,
                 "-u",
-                str(root / "scripts" / "match_credit_card_details.py"),
+                "-m",
+                "stages.match_credit_card",
                 "--credit-card",
                 str(cc_csv),
                 "--wechat",
@@ -566,7 +569,8 @@ class WorkflowRunner:
             cmd = [
                 py,
                 "-u",
-                str(root / "scripts" / "match_bank_statement_details.py"),
+                "-m",
+                "stages.match_bank",
                 "--wechat",
                 str(paths.out_dir / "wechat.normalized.csv"),
                 "--alipay",
@@ -582,7 +586,8 @@ class WorkflowRunner:
             cmd = [
                 py,
                 "-u",
-                str(root / "scripts" / "build_unified_output.py"),
+                "-m",
+                "stages.build_unified",
                 "--out-dir",
                 str(paths.out_dir),
                 "--cc-enriched",
@@ -615,7 +620,7 @@ class WorkflowRunner:
             classify_out.mkdir(parents=True, exist_ok=True)
             cmd = [
                 "node",
-                str(root / "scripts" / "classify_unified_openrouter.mjs"),
+                str(root / "stages" / "classify_openrouter.mjs"),
                 "--input",
                 str(paths.out_dir / "unified.transactions.csv"),
                 "--out-dir",
@@ -633,7 +638,8 @@ class WorkflowRunner:
             cmd = [
                 py,
                 "-u",
-                str(root / "scripts" / "finalize_classification.py"),
+                "-m",
+                "stages.finalize",
                 "--config",
                 str(cfg),
                 "--unified-with-id",

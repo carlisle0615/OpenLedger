@@ -11,7 +11,7 @@
 - 可选：指定账期筛选时会额外生成 `<out-dir>/unified.transactions.all.*`
 
 示例：
-- `uv run python scripts/build_unified_output.py --out-dir output`
+- `uv run python -m stages.build_unified --out-dir output`
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from typing import Any
 import pandas as pd
 from pandas.errors import EmptyDataError
 
-from _common import log, make_parser
+from ._common import log, make_parser
 
 UNIFIED_COLUMNS = [
     "trade_time",

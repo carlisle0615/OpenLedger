@@ -1,8 +1,8 @@
 """match_bank：将借记卡流水与微信/支付宝明细进行匹配回填。
 
 输入：
-- `extract_pdf_transactions.py` 产出的一个或多个银行流水 CSV
-- `extract_payment_exports.py` 产出的微信/支付宝标准化 CSV
+- `stages.extract_pdf` 产出的一个或多个银行流水 CSV
+- `stages.extract_exports` 产出的微信/支付宝标准化 CSV
 
 输出：
 - `<out-dir>/bank.enriched.csv`
@@ -10,7 +10,7 @@
 - `<out-dir>/bank.match.xlsx`
 
 示例：
-- `uv run python scripts/match_bank_statement_details.py --out-dir output`
+- `uv run python -m stages.match_bank --out-dir output`
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from typing import Any, Literal
 import pandas as pd
 from rapidfuzz import fuzz
 
-from _common import log, make_parser
+from ._common import log, make_parser
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -297,7 +297,7 @@ def main() -> None:
             bank_csvs = sorted(Path("output").glob("*交易流水*.transactions.csv"))
     if not bank_csvs:
         raise SystemExit(
-            "在 output/ 下找不到可用的借记卡流水 CSV；请先运行 extract_pdf_transactions.py，"
+            "在 output/ 下找不到可用的借记卡流水 CSV；请先运行 `python -m stages.extract_pdf`，"
             "或手动把 bank 类型的 *.transactions.csv 作为参数传入。"
         )
 

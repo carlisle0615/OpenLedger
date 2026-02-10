@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from _common import log, make_parser
+from ._common import log, make_parser
 
 
 def default_classifier_config_path() -> Path:

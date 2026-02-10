@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from _common import log, make_parser
+from stages._common import log, make_parser
 
 
 def _print_header(title: str) -> None:

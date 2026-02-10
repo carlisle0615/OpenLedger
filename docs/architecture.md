@@ -8,7 +8,8 @@ under `runs/` or `output/`.
 
 - `web/`: React UI (optional). Talks to the backend over HTTP.
 - `openledger/`: Backend (stdlib HTTP server + workflow runner).
-- `scripts/`: Data processing steps (PDF extract, export normalize, matching, unified output, classify, finalize).
+- `stages/`: Data processing stages (PDF extract, export normalize, matching, unified output, classify, finalize).
+- `tools/`: Developer/maintenance utilities (probe, batch ops).
 
 ## Execution Model (Runs)
 
@@ -20,7 +21,7 @@ Each run has an isolated working directory:
 - `runs/<run_id>/logs/`: stage logs
 - `runs/<run_id>/state.json`: run state and stage status
 
-The backend orchestrates pipeline stages by invoking the Python/Node scripts and streaming output to log files.
+The backend orchestrates pipeline stages by invoking the Python/Node stage modules under `stages/` and streaming output to log files.
 
 ## Classifier Config Layering
 
@@ -50,4 +51,3 @@ This repo should never contain:
 - any personal notes (`private/`)
 
 See `.gitignore` and `README.md` for details.
-

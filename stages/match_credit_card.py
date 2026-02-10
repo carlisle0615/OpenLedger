@@ -1,8 +1,8 @@
 """match_credit_card：将信用卡账单行与微信/支付宝明细进行匹配回填。
 
 输入：
-- `extract_pdf_transactions.py` 产出的信用卡账单 CSV
-- `extract_payment_exports.py` 产出的微信/支付宝标准化 CSV
+- `stages.extract_pdf` 产出的信用卡账单 CSV
+- `stages.extract_exports` 产出的微信/支付宝标准化 CSV
 
 输出：
 - `<out-dir>/credit_card.enriched.csv`
@@ -10,7 +10,7 @@
 - `<out-dir>/credit_card.match.xlsx`
 
 示例：
-- `uv run python scripts/match_credit_card_details.py --out-dir output`
+- `uv run python -m stages.match_credit_card --out-dir output`
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from typing import Any, Literal
 import pandas as pd
 from rapidfuzz import fuzz
 
-from _common import log, make_parser
+from ._common import log, make_parser
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -148,7 +148,7 @@ def match_credit_card(
         if is_bank_statement:
             hint = (
                 "你传入的看起来是 *银行交易流水* CSV（例如：招商银行交易流水*.transactions.csv）。"
-                "请改用 scripts/match_bank_statement_details.py 处理。"
+                "请改用 `python -m stages.match_bank` 处理。"
             )
         else:
             hint = "请确认传入的是 *信用卡账单* CSV（例如：*信用卡账单*.transactions.csv）。"
@@ -322,7 +322,7 @@ def main() -> None:
             matches = sorted(Path("output").glob("*信用卡*.transactions.csv"))
         if not matches:
             raise SystemExit(
-                "在 output/ 下找不到可用的信用卡账单 CSV；请先运行 extract_pdf_transactions.py，"
+                "在 output/ 下找不到可用的信用卡账单 CSV；请先运行 `python -m stages.extract_pdf`，"
                 "或手动用 --credit-card 指定信用卡类型的 *.transactions.csv。"
             )
         args.credit_card = matches[0]
