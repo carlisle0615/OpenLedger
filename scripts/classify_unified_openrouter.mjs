@@ -2,13 +2,27 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+/**
+ * classify：对 unified.transactions.csv 进行规则/LLM 分类，并生成 review.csv 供人工审核。
+ *
+ * 输入：
+ * - `--input`：统一抽象输出（通常是 `output/unified.transactions.csv` 或 `runs/<run_id>/output/unified.transactions.csv`）
+ * - `--config`：分类器配置（优先 `config/classifier.local.json`，否则 `config/classifier.json`）
+ *
+ * 输出（在 `--out-dir` 下）：
+ * - `unified.with_id.csv`：为每条交易生成稳定的 txn_id
+ * - `suggestions.jsonl`：规则/LLM 的建议分类中间态
+ * - `review.csv`：人工审核表（只改 `final_*` 列）
+ * - `batches/batch_*.json`：LLM 批次审计（raw output、usage 等）
+ */
+
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
 const DEFAULT_PUBLIC_CONFIG = "config/classifier.json";
 const DEFAULT_LOCAL_CONFIG = "config/classifier.local.json";
 
 function defaultClassifierConfigPath() {
-  // Prefer local override (ignored by git) for personal tuning.
+  // 优先使用本地覆盖配置（已被 gitignore），用于个人调参；否则使用仓库内的公共默认配置。
   if (fs.existsSync(DEFAULT_LOCAL_CONFIG)) return DEFAULT_LOCAL_CONFIG;
   return DEFAULT_PUBLIC_CONFIG;
 }
@@ -63,7 +77,7 @@ function parseArgs(argv) {
     } else if (key === "--no-stream") {
       args.noStream = true;
     } else {
-      throw new Error(`Unknown arg: ${key}`);
+      throw new Error(`未知参数: ${key}`);
     }
   }
   return args;
@@ -144,24 +158,24 @@ function compileTextRules(rawRules, { type, categoryIds, threshold }) {
     if (!r || typeof r !== "object") continue;
     if (r.enabled === false) continue;
     const id = r.id ? String(r.id) : "";
-    if (!id) throw new Error(`${type} rule missing id`);
+    if (!id) throw new Error(`${type} 规则缺少 id`);
     const fields = Array.isArray(r.fields) ? r.fields.map((f) => String(f)).filter(Boolean) : [];
     const pattern = r.pattern != null ? String(r.pattern) : "";
     if (!pattern || fields.length === 0) {
-      throw new Error(`${type} rule ${id} missing fields/pattern`);
+      throw new Error(`${type} 规则 ${id} 缺少 fields/pattern`);
     }
 
     let flags = r.flags != null ? String(r.flags) : "";
-    // Avoid stateful RegExp.test behavior
+    // 避免 RegExp.test 因 g/y 标志导致的有状态行为
     flags = flags.replaceAll("g", "").replaceAll("y", "");
     const re = new RegExp(pattern, flags);
     const whenMatchers = compileWhenMatchers(r.when);
 
     if (type === "regex_category_rules") {
       const categoryId = r.category_id ? String(r.category_id) : "";
-      if (!categoryId) throw new Error(`regex_category_rules ${id} missing category_id`);
+      if (!categoryId) throw new Error(`regex_category_rules ${id} 缺少 category_id`);
       if (!categoryIds.has(categoryId)) {
-        throw new Error(`regex_category_rules ${id} invalid category_id=${categoryId}`);
+        throw new Error(`regex_category_rules ${id} 的 category_id 无效: ${categoryId}`);
       }
       const confidence = Number(r.confidence ?? 0);
       const uncertainRaw = Boolean(r.uncertain ?? false);
@@ -172,7 +186,7 @@ function compileTextRules(rawRules, { type, categoryIds, threshold }) {
         category_id: categoryId,
         confidence: Number.isFinite(confidence) ? confidence : 0,
         uncertain,
-        note: r.note ? String(r.note) : `regex:${id}`,
+        note: r.note ? String(r.note) : `正则:${id}`,
         fields,
         re,
         whenMatchers,
@@ -180,7 +194,7 @@ function compileTextRules(rawRules, { type, categoryIds, threshold }) {
       continue;
     }
 
-    // ignore_rules
+    // ignore_rules（忽略规则）
     compiled.push({
       type,
       id,
@@ -270,10 +284,10 @@ function parseCsv(text) {
     field += ch;
   }
 
-  if (inQuotes) throw new Error("Invalid CSV: unterminated quote");
-  // Final field
+  if (inQuotes) throw new Error("CSV 格式错误：引号未闭合");
+  // 末尾字段
   row.push(field);
-  // Avoid adding a trailing empty row if the file ends with newline
+  // 文件以换行结尾时，避免额外追加一个空行
   const isTrailingEmpty = row.length === 1 && row[0] === "" && rows.length > 0;
   if (!isTrailingEmpty) rows.push(row);
   return rows;
@@ -365,7 +379,7 @@ async function chatOnce({ apiKey, model, messages, stream }) {
   });
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`OpenRouter error ${res.status}: ${errText.slice(0, 4000)}`);
+    throw new Error(`OpenRouter 接口错误 ${res.status}: ${errText.slice(0, 4000)}`);
   }
 
   if (!stream) {
@@ -563,7 +577,7 @@ async function main() {
 
   const apiKey = args.apiKey ?? process.env.OPENROUTER_API_KEY;
   if (!args.dryRun && (!apiKey || !String(apiKey).trim())) {
-    throw new Error("Missing OPENROUTER_API_KEY (set in .env or pass --api-key).");
+    throw new Error("缺少 OPENROUTER_API_KEY（可写在 .env，或通过 --api-key 传入）。");
   }
 
   const outDir = args.outDir;
@@ -572,7 +586,7 @@ async function main() {
 
   const categoryIds = new Set(categories.map((c) => c.id));
   if (!categoryIds.has("other")) {
-    throw new Error("config.categories must include id=other as fallback category.");
+    throw new Error("config.categories 必须包含 id=other，用作兜底分类。");
   }
   const categoriesById = new Map(categories.map((c) => [c.id, c.name]));
 
@@ -616,7 +630,7 @@ async function main() {
         category_id: "other",
         confidence: 1,
         uncertain: false,
-        note: `ignored: ${ignoreHit.ignore_reason}`,
+        note: `已忽略: ${ignoreHit.ignore_reason}`,
         ignored: true,
         ignore_reason: ignoreHit.ignore_reason,
         mapped_by: "ignore_rule",
@@ -657,7 +671,7 @@ async function main() {
   }
 
   console.log(
-    `[classify] input=${args.input} total=${unifiedWithId.length} pending=${toClassify.length} ignored=${ignoredCount} regex=${regexCount} llm_pending=${llmQueue.length} batch_size=${batchSize} max_concurrency=${maxConcurrency}`,
+    `[分类] 输入=${args.input} 总数=${unifiedWithId.length} 待处理=${toClassify.length} 已忽略=${ignoredCount} 正则命中=${regexCount} LLM待处理=${llmQueue.length} 批大小=${batchSize} 并发=${maxConcurrency}`,
   );
 
   const batches = [];
@@ -677,7 +691,7 @@ async function main() {
         if (flow === "refund") categoryId = "refund";
         else if (flow === "transfer") categoryId = "red_packet_transfer";
         const uncertain = categoryId === "other";
-        resultByTxnId.set(r.txn_id, { category_id: categoryId, confidence: uncertain ? 0.3 : 0.9, uncertain, note: "dry-run" });
+        resultByTxnId.set(r.txn_id, { category_id: categoryId, confidence: uncertain ? 0.3 : 0.9, uncertain, note: "演练" });
       }
     } else {
       const { system, user } = buildPrompt({ categories, columns: promptColumns, rows: batchRows });
@@ -686,7 +700,7 @@ async function main() {
         { role: "user", content: user },
       ];
 
-      console.log(`[classify] batch ${batchNo} (${batchRows.length} rows) model=${model}`);
+      console.log(`[分类] 批次 ${batchNo} 行数=${batchRows.length} 模型=${model}`);
       const startedAt = Date.now();
       const response = await chatOnce({ apiKey, model, messages, stream: !args.noStream });
       const elapsedMs = Date.now() - startedAt;
@@ -723,7 +737,7 @@ async function main() {
     }
 
     for (const r of batchRows) {
-      const item = resultByTxnId.get(r.txn_id) ?? { category_id: "other", confidence: 0, uncertain: true, note: "missing" };
+      const item = resultByTxnId.get(r.txn_id) ?? { category_id: "other", confidence: 0, uncertain: true, note: "缺失" };
       const record = {
         txn_id: r.txn_id,
         category_id: item.category_id,
@@ -771,9 +785,9 @@ async function main() {
   const reviewPath = path.join(outDir, "review.csv");
   writeCsv(reviewPath, reviewHeader, reviewRows.map((r) => reviewHeader.map((h) => r[h] ?? "")));
 
-  console.log(`[classify] suggestions -> ${suggestionsPath}`);
-  console.log(`[classify] review -> ${reviewPath}`);
-  console.log(`[classify] next: edit review.csv, then run finalize script`);
+  console.log(`[分类] 建议输出 -> ${suggestionsPath}`);
+  console.log(`[分类] 审核表   -> ${reviewPath}`);
+  console.log("[分类] 下一步：编辑 review.csv（填写 final_* 列），再运行 finalize 脚本。");
 }
 
 main().catch((err) => {

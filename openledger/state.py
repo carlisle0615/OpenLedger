@@ -39,7 +39,7 @@ def resolve_under_root(root: Path, rel_path: str) -> Path:
     try:
         p.relative_to(root_resolved)
     except Exception as exc:
-        raise ValueError("path escapes root") from exc
+        raise ValueError("路径越界：尝试访问 root 目录之外的文件") from exc
     return p
 
 
@@ -71,9 +71,9 @@ def init_run_state(run_id: str) -> dict[str, Any]:
         "cancel_requested": False,
         "inputs": [],
         "options": {
-            "classify_mode": "llm",  # llm | dry_run
+            "classify_mode": "llm",  # llm（调用模型） | dry_run（演练，不调用模型）
             "allow_unreviewed": False,
-            # Default to current year/month (credit-card cycle: prev month 21 ~ current month 20).
+            # 默认取当前年月（信用卡账期：上月 21 ~ 本月 20）。
             "period_year": now_local.year,
             "period_month": now_local.month,
         },

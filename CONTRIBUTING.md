@@ -27,7 +27,7 @@ pnpm dev
 
 Python (syntax check):
 ```bash
-uv run python -m compileall main.py scripts openledger workflow_ui
+uv run python -m compileall main.py scripts openledger tests
 ```
 
 Python (unit tests):

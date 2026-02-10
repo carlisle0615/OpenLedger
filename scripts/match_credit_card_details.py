@@ -1,8 +1,21 @@
+"""match_credit_card：将招行信用卡账单行与微信/支付宝明细进行匹配回填。
+
+输入：
+- `extract_pdf_transactions.py` 产出的信用卡账单 CSV
+- `extract_payment_exports.py` 产出的微信/支付宝标准化 CSV
+
+输出：
+- `<out-dir>/credit_card.enriched.csv`
+- `<out-dir>/credit_card.unmatched.csv`
+- `<out-dir>/credit_card.match.xlsx`
+
+示例：
+- `uv run python scripts/match_credit_card_details.py --out-dir output`
+"""
+
 from __future__ import annotations
 
-import argparse
 import re
-from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -11,16 +24,18 @@ from typing import Any, Literal
 import pandas as pd
 from rapidfuzz import fuzz
 
+from _common import log, make_parser
+
 
 def _to_decimal(value: Any) -> Decimal:
     s = str(value).strip()
     s = s.replace("¥", "").replace("￥", "").replace(",", "").strip()
     if s in {"", "nan", "NaN", "None"}:
-        raise ValueError(f"Empty decimal: {value!r}")
+        raise ValueError(f"金额为空: {value!r}")
     try:
         return Decimal(s)
-    except InvalidOperation as exc:  # pragma: no cover - defensive
-        raise ValueError(f"Invalid decimal: {value!r}") from exc
+    except InvalidOperation as exc:  # pragma: no cover - 防御性分支
+        raise ValueError(f"无效的金额: {value!r}") from exc
 
 
 def _to_date(value: Any) -> date | None:
@@ -43,7 +58,7 @@ def _candidate_channels(desc: str) -> list[Literal["wechat", "alipay"]]:
         return ["wechat"]
     if "支付宝" in desc:
         return ["alipay"]
-    # Some entries (e.g., 美团支付/京东支付) may still be paid via WeChat/Alipay.
+    # 部分条目（例如“美团支付/京东支付”）也可能实际走微信/支付宝。
     return ["wechat", "alipay"]
 
 
@@ -64,7 +79,7 @@ def _build_detail_df(wechat_path: Path, alipay_path: Path) -> pd.DataFrame:
         out["trade_no"] = df.get("trade_no", "")
         out["merchant_no"] = df.get("merchant_no", "")
         out["status"] = df.get("status", "")
-        # Extra fields for reference.
+        # 额外字段（便于人工核对/审计）。
         out["category_or_type"] = df.get("category", df.get("trans_type", ""))
         out["remark"] = df.get("remark", "")
         return out
@@ -104,7 +119,7 @@ def _candidate_score(cc_desc: str, cc_section: str, cc_base_date: date, cand_row
     dir_penalty = _direction_penalty(cc_section, cand_row)
     text = f"{cand_row.get('counterparty','')} {cand_row.get('item','')}".strip()
     sim = fuzz.partial_ratio(cc_desc, text) if text else 0
-    # Lower is better: prefer closer date, then expected direction, then higher similarity.
+    # 越小越好：优先日期更近，其次方向符合，最后文本相似度更高。
     return (date_diff, dir_penalty, -sim)
 
 
@@ -132,17 +147,17 @@ def match_credit_card(
         hint = ""
         if is_bank_statement:
             hint = (
-                "It looks like you passed a *bank statement* CSV (e.g. 招商银行交易流水*.transactions.csv). "
-                "For that file, run scripts/match_bank_statement_details.py instead."
+                "你传入的看起来是 *招行交易流水* CSV（例如：招商银行交易流水*.transactions.csv）。"
+                "请改用 scripts/match_bank_statement_details.py 处理。"
             )
         else:
-            hint = "Make sure you pass an extracted *credit card bill* CSV (e.g. *信用卡账单*.transactions.csv)."
+            hint = "请确认传入的是 *信用卡账单* CSV（例如：*信用卡账单*.transactions.csv）。"
         raise SystemExit(
-            "Invalid --credit-card CSV schema.\n"
-            f"- file: {credit_card_csv}\n"
-            f"- missing columns: {missing}\n"
-            f"- got columns: {list(cc.columns)}\n"
-            f"- hint: {hint}\n"
+            "--credit-card CSV 表结构不符合预期。\n"
+            f"- 文件: {credit_card_csv}\n"
+            f"- 缺少列: {missing}\n"
+            f"- 实际列: {list(cc.columns)}\n"
+            f"- 提示: {hint}\n"
         )
     cc_raw_cols = list(cc.columns)
     cc["trans_date_dt"] = cc["trans_date"].map(lambda s: _to_date(s) or date.min)
@@ -273,24 +288,24 @@ def match_credit_card(
         matched_df.to_excel(writer, index=False, sheet_name="enriched")
         unmatched_df.to_excel(writer, index=False, sheet_name="unmatched")
 
-    print(f"[match] matched={len(match_rows)} -> {matched_path}")
-    print(f"[match] unmatched={len(unmatched_rows)} -> {unmatched_path}")
-    print(f"[match] xlsx -> {xlsx_path}")
+    log("match_credit_card", f"已匹配={len(match_rows)} 输出={matched_path}")
+    log("match_credit_card", f"未匹配={len(unmatched_rows)} 输出={unmatched_path}")
+    log("match_credit_card", f"Excel={xlsx_path}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Match credit card PDF txns with WeChat/Alipay details.")
+    parser = make_parser("将信用卡账单与微信/支付宝明细进行匹配回填。")
     parser.add_argument("--credit-card", type=Path, default=None)
     parser.add_argument("--wechat", type=Path, default=Path("output/wechat.normalized.csv"))
     parser.add_argument("--alipay", type=Path, default=Path("output/alipay.normalized.csv"))
-    parser.add_argument("--out-dir", type=Path, default=Path("output"))
+    parser.add_argument("--out-dir", type=Path, default=Path("output"), help="输出目录。")
     parser.add_argument("--max-day-diff", type=int, default=1)
     args = parser.parse_args()
 
     if args.credit_card is None:
         matches = sorted(Path("output").glob("*信用卡账单*.transactions.csv"))
         if not matches:
-            raise SystemExit("Cannot find extracted credit card CSV under output/; run extract_pdf_transactions.py first.")
+            raise SystemExit("在 output/ 下找不到信用卡账单 CSV；请先运行 extract_pdf_transactions.py。")
         args.credit_card = matches[0]
 
     match_credit_card(

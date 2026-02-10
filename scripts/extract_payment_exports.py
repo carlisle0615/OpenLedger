@@ -1,29 +1,40 @@
+"""extract_exports：将微信/支付宝导出文件标准化为稳定的 CSV Schema。
+
+输入：
+- 微信导出：`微信支付账单流水文件*.xlsx`（或传 `--wechat`）
+- 支付宝导出：`支付宝交易明细*.csv`（或传 `--alipay`）
+
+输出：
+- `<out-dir>/wechat.normalized.csv`
+- `<out-dir>/alipay.normalized.csv`
+
+示例：
+- `uv run python scripts/extract_payment_exports.py --out-dir output`
+"""
+
 from __future__ import annotations
 
-import argparse
-import csv
-import re
-from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import pandas as pd
+
+from _common import log, make_parser
 
 
 def _to_decimal_amount(value: str) -> Decimal:
     cleaned = str(value).strip()
     cleaned = cleaned.replace("¥", "").replace("￥", "").replace(",", "").strip()
     if cleaned in {"", "nan", "NaN", "None"}:
-        raise ValueError(f"Empty amount: {value!r}")
+        raise ValueError(f"金额为空: {value!r}")
     try:
         return Decimal(cleaned)
-    except InvalidOperation as exc:  # pragma: no cover - defensive
-        raise ValueError(f"Invalid amount: {value!r}") from exc
+    except InvalidOperation as exc:  # pragma: no cover - 防御性分支
+        raise ValueError(f"无效的金额: {value!r}") from exc
 
 
 def _find_wechat_header_row(df: pd.DataFrame) -> int | None:
-    # WeChat export has meta rows, then a header row containing 交易时间/交易类型...
+    # 微信导出通常在若干元信息行之后，才出现“交易时间/交易类型 ...”的表头行。
     as_str = df.astype(str)
     mask = as_str.apply(lambda c: c.str.fullmatch("交易时间", na=False))
     hits = list(as_str.index[mask.any(axis=1)])
@@ -34,7 +45,7 @@ def extract_wechat_xlsx(path: Path) -> pd.DataFrame:
     raw = pd.read_excel(path, header=None)
     header_row = _find_wechat_header_row(raw)
     if header_row is None:
-        raise ValueError("Cannot find WeChat header row (交易时间).")
+        raise ValueError("未找到微信表头行（应包含：交易时间）。")
 
     header = [str(v).strip() for v in raw.iloc[header_row].tolist()]
     df = raw.iloc[header_row + 1 :].copy()
@@ -42,13 +53,13 @@ def extract_wechat_xlsx(path: Path) -> pd.DataFrame:
 
     time_col = "交易时间"
     if time_col not in df.columns:
-        raise ValueError("WeChat xlsx missing 交易时间 column after header parse.")
+        raise ValueError("微信 xlsx 解析表头后缺少“交易时间”列。")
 
     df = df.dropna(subset=[time_col])
 
     amount_col = "金额(元)" if "金额(元)" in df.columns else ("金额" if "金额" in df.columns else None)
     if not amount_col:
-        raise ValueError("WeChat xlsx missing amount column (金额/金额(元)).")
+        raise ValueError("微信 xlsx 缺少金额列（金额/金额(元)）。")
 
     df = df.rename(
         columns={
@@ -115,7 +126,7 @@ def extract_alipay_csv(path: Path) -> pd.DataFrame:
     lines = text.splitlines()
     header_idx = _find_alipay_header_idx(lines)
     if header_idx is None:
-        raise ValueError("Cannot find Alipay header line (交易时间...).")
+        raise ValueError("未找到支付宝表头行（应包含：交易时间...）。")
 
     df = pd.read_csv(
         path,
@@ -125,10 +136,10 @@ def extract_alipay_csv(path: Path) -> pd.DataFrame:
         dtype=str,
     )
 
-    # Drop trailing empty column (header ends with a comma).
+    # 去掉尾部空列（有些导出 CSV 的表头会以逗号结尾）。
     df = df.loc[:, [c for c in df.columns if c and not str(c).startswith("Unnamed")]]
 
-    # Normalize whitespace/tabs in ids.
+    # 规范化 id 字段里的空白和制表符。
     for col in ["交易订单号", "商家订单号"]:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip().str.replace("\t", "", regex=False)
@@ -179,17 +190,17 @@ def extract_alipay_csv(path: Path) -> pd.DataFrame:
 def _write_csv(df: pd.DataFrame, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df_out = df.copy()
-    # Ensure stable string serialization for Decimal + datetime.
+    # 确保 Decimal / datetime 等类型的序列化稳定为字符串，便于下游读取。
     for col in df_out.columns:
         df_out[col] = df_out[col].map(lambda v: "" if v is None else str(v))
     df_out.to_csv(out_path, index=False, encoding="utf-8")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract WeChat/Alipay exports to normalized CSV.")
+    parser = make_parser("将微信/支付宝导出文件标准化为 CSV。")
     parser.add_argument("--wechat", type=Path, default=None)
     parser.add_argument("--alipay", type=Path, default=None)
-    parser.add_argument("--out-dir", type=Path, default=Path("output"))
+    parser.add_argument("--out-dir", type=Path, default=Path("output"), help="输出目录。")
     args = parser.parse_args()
 
     if args.wechat is None:
@@ -203,17 +214,17 @@ def main() -> None:
         df_w = extract_wechat_xlsx(args.wechat)
         out = args.out_dir / "wechat.normalized.csv"
         _write_csv(df_w, out)
-        print(f"[wechat] {args.wechat} -> {out} rows={len(df_w)}")
+        log("extract_exports", f"微信输入={args.wechat} 输出={out} 行数={len(df_w)}")
     else:
-        print("[wechat] missing input")
+        log("extract_exports", "微信=缺少输入")
 
     if args.alipay:
         df_a = extract_alipay_csv(args.alipay)
         out = args.out_dir / "alipay.normalized.csv"
         _write_csv(df_a, out)
-        print(f"[alipay] {args.alipay} -> {out} rows={len(df_a)}")
+        log("extract_exports", f"支付宝输入={args.alipay} 输出={out} 行数={len(df_a)}")
     else:
-        print("[alipay] missing input")
+        log("extract_exports", "支付宝=缺少输入")
 
 
 if __name__ == "__main__":

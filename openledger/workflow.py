@@ -81,7 +81,7 @@ def create_run(root: Path) -> Paths:
     (paths.run_dir / "logs").mkdir(parents=True, exist_ok=True)
     paths.config_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy base classifier config for per-run edits.
+    # 复制基础分类器配置到本次 run，便于在 UI 中做“按 run 调参”。
     base_cfg = resolve_global_classifier_config(root)
     if base_cfg.exists():
         shutil.copyfile(base_cfg, paths.config_dir / "classifier.json")
@@ -102,7 +102,7 @@ def _set_stage(state: dict[str, Any], stage_id: str, **updates: Any) -> None:
         if s.get("id") == stage_id:
             s.update(updates)
             return
-    raise KeyError(f"Unknown stage_id: {stage_id}")
+    raise KeyError(f"未知 stage_id: {stage_id}")
 
 
 def _detect_inputs(paths: Paths) -> dict[str, Any]:
@@ -154,8 +154,8 @@ def _find_extracted_csvs(out_dir: Path) -> dict[str, list[Path]]:
         else:
             unknown.append(p)
 
-    # If we successfully classified any file by schema, trust that result and only
-    # use name-based heuristics as a secondary hint for the remaining unknowns.
+    # 如果能用表头 schema 判别出任意文件类型，则优先信任该结果；
+    # 对剩余无法识别的文件再用文件名关键字作为次级提示。
     if cc_by_schema or bank_by_schema:
         cc = list(cc_by_schema)
         bank = list(bank_by_schema)
@@ -166,7 +166,7 @@ def _find_extracted_csvs(out_dir: Path) -> dict[str, list[Path]]:
                 bank.append(p)
         return {"credit_card": sorted(set(cc)), "bank": sorted(set(bank))}
 
-    # Fallback: no schema matches (should be rare). Use name heuristics only.
+    # 兜底：schema 全部不匹配（应当很少发生），仅使用文件名关键字。
     cc = [p for p in tx_csvs if "信用卡" in p.name]
     bank = [p for p in tx_csvs if "交易流水" in p.name]
     return {"credit_card": cc, "bank": bank}
@@ -296,9 +296,9 @@ def _run_cmd(
 ) -> int:
     logger = kwargs.get("logger")
     if logger:
-        logger.info(f"Running cmd: {' '.join(cmd)}")
+        logger.info(f"执行命令: {' '.join(cmd)}")
     else:
-        print(f"Running cmd: {' '.join(cmd)}")
+        print(f"执行命令: {' '.join(cmd)}")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as f:
         cmd_line = "$ " + " ".join(cmd)
@@ -344,7 +344,7 @@ class WorkflowRunner:
         state = get_state(paths)
         state["cancel_requested"] = True
         save_state(paths, state)
-        self._logger.bind(run_id=run_id, stage_id="-").warning("Cancel requested")
+        self._logger.bind(run_id=run_id, stage_id="-").warning("已请求取消")
 
     def start(
         self,
@@ -366,7 +366,7 @@ class WorkflowRunner:
             self._threads[run_id] = thread
             thread.start()
             self._logger.bind(run_id=run_id, stage_id="-").info(
-                f"Workflow started (stages={stages})"
+                f"工作流已启动（stages={stages}）"
             )
 
     def _run(self, run_id: str, stages: list[str], options: dict[str, Any]) -> None:
@@ -377,11 +377,11 @@ class WorkflowRunner:
         state["status"] = "running"
         state["cancel_requested"] = False
         state["current_stage"] = None
-        # Merge options
+        # 合并 options（UI 传入的 options 允许覆盖 state.json 中已有值）。
         state_opts = state.get("options", {})
         if not isinstance(state_opts, dict):
             state_opts = {}
-        # Allow explicit nulls to clear filters, etc.
+        # 允许显式传入 null 用于清空筛选条件等。
         state_opts.update(options)
         state["options"] = state_opts
         save_state(paths, state)
@@ -391,7 +391,7 @@ class WorkflowRunner:
             if state.get("cancel_requested"):
                 state["status"] = "canceled"
                 save_state(paths, state)
-                run_logger.warning("Workflow canceled")
+                run_logger.warning("工作流已取消")
                 return
 
             _set_stage(
@@ -406,7 +406,7 @@ class WorkflowRunner:
             save_state(paths, state)
 
             st_logger = self._logger.bind(run_id=run_id, stage_id=stage_id)
-            st_logger.info(f"Stage started: {stage_name.get(stage_id, stage_id)}")
+            st_logger.info(f"阶段开始: {stage_name.get(stage_id, stage_id)}")
             try:
                 exit_code = self._run_stage(paths, stage_id, state.get("options", {}))
             except Exception as exc:
@@ -421,21 +421,14 @@ class WorkflowRunner:
                 state["status"] = "failed"
                 state["current_stage"] = stage_id
                 save_state(paths, state)
-                st_logger.error(f"Stage failed: {exc}")
+                st_logger.error(f"阶段失败: {exc}")
                 return
 
             if exit_code != 0:
                 state = get_state(paths)
                 if stage_id == "finalize":
                     pending_path = paths.out_dir / "pending_review.csv"
-                    log_path = paths.run_dir / "logs" / f"{stage_id}.log"
-                    needs_review = False
-                    if pending_path.exists():
-                        try:
-                            tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
-                            needs_review = ("uncertain rows" in tail) or ("Pending list:" in tail)
-                        except Exception:
-                            needs_review = True
+                    needs_review = pending_path.exists()
                     if needs_review:
                         rel_pending = safe_rel_path(paths.run_dir, pending_path)
                         _set_stage(
@@ -443,12 +436,12 @@ class WorkflowRunner:
                             stage_id,
                             status="needs_review",
                             ended_at=utc_now_iso(),
-                            error=f"Needs manual review: {rel_pending}",
+                            error=f"需要人工审核: {rel_pending}",
                         )
                         state["status"] = "needs_review"
                         state["current_stage"] = stage_id
                         save_state(paths, state)
-                        st_logger.warning(f"Needs manual review: {rel_pending}")
+                        st_logger.warning(f"需要人工审核: {rel_pending}")
                         return
 
                 _set_stage(
@@ -461,7 +454,7 @@ class WorkflowRunner:
                 state["status"] = "failed"
                 state["current_stage"] = stage_id
                 save_state(paths, state)
-                st_logger.error(f"Stage failed: exit_code={exit_code}")
+                st_logger.error(f"阶段失败: exit_code={exit_code}")
                 return
 
             state = get_state(paths)
@@ -469,13 +462,13 @@ class WorkflowRunner:
                 state, stage_id, status="succeeded", ended_at=utc_now_iso(), error=""
             )
             save_state(paths, state)
-            st_logger.info("Stage succeeded")
+            st_logger.info("阶段成功")
 
         state = get_state(paths)
         state["status"] = "succeeded"
         state["current_stage"] = None
         save_state(paths, state)
-        run_logger.info("Workflow succeeded")
+        run_logger.info("工作流成功")
 
     def _run_stage(self, paths: Paths, stage_id: str, options: dict[str, Any]) -> int:
         log_path = paths.run_dir / "logs" / f"{stage_id}.log"
@@ -491,7 +484,7 @@ class WorkflowRunner:
         if stage_id == "extract_pdf":
             pdfs: list[Path] = inputs["pdfs"]
             if not pdfs:
-                raise RuntimeError("No PDFs uploaded.")
+                raise RuntimeError("未上传 PDF 文件。")
             cmd = [
                 py,
                 "-u",
@@ -500,7 +493,7 @@ class WorkflowRunner:
                 str(paths.out_dir),
             ]
             cmd.extend([str(p) for p in pdfs])
-            st_logger.info(f"Log file: {log_path}")
+            st_logger.info(f"日志文件: {log_path}")
             return _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
 
         if stage_id == "extract_exports":
@@ -510,8 +503,8 @@ class WorkflowRunner:
                 _write_empty_export_outputs(paths.out_dir)
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 with log_path.open("w", encoding="utf-8") as f:
-                    f.write("[extract_exports] Missing WeChat xlsx and Alipay csv; skipped.\n")
-                st_logger.warning("Missing WeChat xlsx and Alipay csv; skipped extract_exports.")
+                    f.write("[extract_exports] 缺少微信 xlsx 和支付宝 csv，已跳过。\n")
+                st_logger.warning("缺少微信 xlsx 和支付宝 csv，已跳过 extract_exports。")
                 return 0
             cmd = [
                 py,
@@ -524,9 +517,9 @@ class WorkflowRunner:
                 cmd.extend(["--wechat", str(wechat)])
             if alipay:
                 cmd.extend(["--alipay", str(alipay)])
-            st_logger.info(f"Log file: {log_path}")
+            st_logger.info(f"日志文件: {log_path}")
             exit_code = _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
-            # Ensure downstream stages can always read the normalized CSVs.
+            # 确保下游阶段始终能读取到标准化 CSV（即使导出文件缺失/解析失败）。
             if not (paths.out_dir / "wechat.normalized.csv").exists() or not (paths.out_dir / "alipay.normalized.csv").exists():
                 _write_empty_export_outputs(paths.out_dir)
             return exit_code
@@ -537,8 +530,8 @@ class WorkflowRunner:
                 _write_empty_credit_card_outputs(paths.out_dir)
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 with log_path.open("w", encoding="utf-8") as f:
-                    f.write("[match_credit_card] No credit card bill CSV found; skipped.\n")
-                st_logger.warning("No credit card bill CSV found; skipped match_credit_card.")
+                    f.write("[match_credit_card] 未找到信用卡账单 CSV，已跳过。\n")
+                st_logger.warning("未找到信用卡账单 CSV，已跳过 match_credit_card。")
                 return 0
             cc_csv = cc_csvs[0]
             cmd = [
@@ -554,7 +547,7 @@ class WorkflowRunner:
                 "--out-dir",
                 str(paths.out_dir),
             ]
-            st_logger.info(f"Log file: {log_path}")
+            st_logger.info(f"日志文件: {log_path}")
             return _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
 
         if stage_id == "match_bank":
@@ -563,8 +556,8 @@ class WorkflowRunner:
                 _write_empty_bank_outputs(paths.out_dir)
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 with log_path.open("w", encoding="utf-8") as f:
-                    f.write("[match_bank] No bank statement CSV found; skipped.\n")
-                st_logger.warning("No bank statement CSV found; skipped match_bank.")
+                    f.write("[match_bank] 未找到招行流水 CSV，已跳过。\n")
+                st_logger.warning("未找到招行流水 CSV，已跳过 match_bank。")
                 return 0
             cmd = [
                 py,
@@ -578,7 +571,7 @@ class WorkflowRunner:
                 str(paths.out_dir),
             ]
             cmd.extend([str(p) for p in bank_csvs])
-            st_logger.info(f"Log file: {log_path}")
+            st_logger.info(f"日志文件: {log_path}")
             return _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
 
         if stage_id == "build_unified":
@@ -605,14 +598,14 @@ class WorkflowRunner:
             period_month = options.get("period_month")
             if period_year and period_month:
                 cmd.extend(["--period-year", str(period_year), "--period-month", str(period_month)])
-            st_logger.info(f"Log file: {log_path}")
+            st_logger.info(f"日志文件: {log_path}")
             return _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
 
         if stage_id == "classify":
             cfg = paths.config_dir / "classifier.json"
             if not cfg.exists():
                 raise RuntimeError(
-                    "Missing classifier config in run/config/classifier.json"
+                    "缺少分类器配置：runs/<run_id>/config/classifier.json"
                 )
             classify_out = paths.out_dir / "classify"
             classify_out.mkdir(parents=True, exist_ok=True)
@@ -628,7 +621,7 @@ class WorkflowRunner:
             ]
             if options.get("classify_mode") == "dry_run":
                 cmd.append("--dry-run")
-            st_logger.info(f"Log file: {log_path}")
+            st_logger.info(f"日志文件: {log_path}")
             return _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
 
         if stage_id == "finalize":
@@ -648,10 +641,10 @@ class WorkflowRunner:
             ]
             if options.get("allow_unreviewed"):
                 cmd.append("--allow-unreviewed")
-            st_logger.info(f"Log file: {log_path}")
+            st_logger.info(f"日志文件: {log_path}")
             return _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
 
-        raise KeyError(f"Unknown stage_id: {stage_id}")
+        raise KeyError(f"未知 stage_id: {stage_id}")
 
 
 def list_artifacts(paths: Paths) -> list[dict[str, Any]]:

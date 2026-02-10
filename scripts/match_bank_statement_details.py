@@ -1,6 +1,20 @@
+"""match_bank：将招行借记卡流水与微信/支付宝明细进行匹配回填。
+
+输入：
+- `extract_pdf_transactions.py` 产出的一个或多个招行流水 CSV
+- `extract_payment_exports.py` 产出的微信/支付宝标准化 CSV
+
+输出：
+- `<out-dir>/bank.enriched.csv`
+- `<out-dir>/bank.unmatched.csv`
+- `<out-dir>/bank.match.xlsx`
+
+示例：
+- `uv run python scripts/match_bank_statement_details.py --out-dir output`
+"""
+
 from __future__ import annotations
 
-import argparse
 import re
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -10,16 +24,18 @@ from typing import Any, Literal
 import pandas as pd
 from rapidfuzz import fuzz
 
+from _common import log, make_parser
+
 
 def _to_decimal(value: Any) -> Decimal:
     s = str(value).strip()
     s = s.replace("¥", "").replace("￥", "").replace(",", "").strip()
     if s in {"", "nan", "NaN", "None"}:
-        raise ValueError(f"Empty decimal: {value!r}")
+        raise ValueError(f"金额为空: {value!r}")
     try:
         return Decimal(s)
-    except InvalidOperation as exc:  # pragma: no cover - defensive
-        raise ValueError(f"Invalid decimal: {value!r}") from exc
+    except InvalidOperation as exc:  # pragma: no cover - 防御性分支
+        raise ValueError(f"无效的金额: {value!r}") from exc
 
 
 def _to_date(value: Any) -> date | None:
@@ -239,16 +255,16 @@ def match_bank_statements(
         enriched_df.to_excel(writer, index=False, sheet_name="enriched")
         unmatched_df.to_excel(writer, index=False, sheet_name="unmatched")
 
-    print(f"[bank match] enriched={len(enriched_df)} -> {enriched_path}")
-    print(f"[bank match] unmatched={len(unmatched_df)} -> {unmatched_path}")
-    print(f"[bank match] xlsx -> {xlsx_path}")
+    log("match_bank", f"已匹配={len(enriched_df)} 输出={enriched_path}")
+    log("match_bank", f"未匹配={len(unmatched_df)} 输出={unmatched_path}")
+    log("match_bank", f"Excel={xlsx_path}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Match CMB debit statement txns with WeChat/Alipay details.")
+    parser = make_parser("将招行借记卡流水与微信/支付宝明细进行匹配回填。")
     parser.add_argument("--wechat", type=Path, default=Path("output/wechat.normalized.csv"))
     parser.add_argument("--alipay", type=Path, default=Path("output/alipay.normalized.csv"))
-    parser.add_argument("--out-dir", type=Path, default=Path("output"))
+    parser.add_argument("--out-dir", type=Path, default=Path("output"), help="输出目录。")
     parser.add_argument("--max-day-diff", type=int, default=1)
     parser.add_argument("bank_csv", type=Path, nargs="*")
     args = parser.parse_args()
@@ -257,7 +273,7 @@ def main() -> None:
     if not bank_csvs:
         bank_csvs = sorted(Path("output").glob("招商银行交易流水*.transactions.csv"))
     if not bank_csvs:
-        raise SystemExit("Cannot find bank statement CSV under output/; run extract_pdf_transactions.py first.")
+        raise SystemExit("在 output/ 下找不到招行流水 CSV；请先运行 extract_pdf_transactions.py。")
 
     match_bank_statements(
         bank_csvs=bank_csvs,

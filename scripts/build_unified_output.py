@@ -1,6 +1,21 @@
+"""build_unified：从多来源产物构建一张“统一抽象字段”的交易表。
+
+输入（通常都在 `<out-dir>/` 下）：
+- `credit_card.enriched.csv`, `credit_card.unmatched.csv`
+- `bank.enriched.csv`, `bank.unmatched.csv`
+- `wechat.normalized.csv`, `alipay.normalized.csv`
+
+输出：
+- `<out-dir>/unified.transactions.csv`
+- `<out-dir>/unified.transactions.xlsx`
+- 可选：指定账期筛选时会额外生成 `<out-dir>/unified.transactions.all.*`
+
+示例：
+- `uv run python scripts/build_unified_output.py --out-dir output`
+"""
+
 from __future__ import annotations
 
-import argparse
 import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -9,6 +24,8 @@ from typing import Any
 
 import pandas as pd
 from pandas.errors import EmptyDataError
+
+from _common import log, make_parser
 
 UNIFIED_COLUMNS = [
     "trade_time",
@@ -34,11 +51,11 @@ def _to_decimal(value: Any) -> Decimal:
     s = str(value).strip()
     s = s.replace("¥", "").replace("￥", "").replace(",", "").strip()
     if not s or s.lower() in {"nan", "none"}:
-        raise ValueError(f"Empty decimal: {value!r}")
+        raise ValueError(f"金额为空: {value!r}")
     try:
         return Decimal(s)
-    except InvalidOperation as exc:  # pragma: no cover - defensive
-        raise ValueError(f"Invalid decimal: {value!r}") from exc
+    except InvalidOperation as exc:  # pragma: no cover - 防御性分支
+        raise ValueError(f"无效的金额: {value!r}") from exc
 
 
 _CREDIT_LAST4_RE = re.compile(r"信用卡\((\d{4})\)")
@@ -424,7 +441,7 @@ def build_unified(
     wallet_out = pd.concat([_wechat_wallet_rows(wechat_norm), _alipay_wallet_rows(alipay_norm)], ignore_index=True)
 
     all_txn = pd.concat([cc_out, bank_out, wallet_out], ignore_index=True)
-    # Sort by date then time (time can be empty).
+    # 先按日期、再按时间排序（时间可能为空）。
     all_txn = all_txn.sort_values(by=["trade_date", "trade_time", "account"], ascending=True, kind="stable")
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -446,23 +463,23 @@ def build_unified(
         mask = (all_txn["trade_date_dt"] >= start_date) & (all_txn["trade_date_dt"] <= end_date)
         filtered_txn = all_txn[mask].drop(columns=["trade_date_dt"]).copy()
         filtered_txn = filtered_txn.sort_values(by=["trade_date", "trade_time", "account"], ascending=True, kind="stable")
-        print(f"[unified] period={label} start={start_date.isoformat()} end={end_date.isoformat()}")
-        print(f"[unified] all_rows={len(all_txn)} filtered_rows={len(filtered_txn)}")
+        log("build_unified", f"账期={label} 开始={start_date.isoformat()} 结束={end_date.isoformat()}")
+        log("build_unified", f"全量行数={len(all_txn)} 筛选后行数={len(filtered_txn)}")
 
     filtered_txn.to_csv(csv_path, index=False, encoding="utf-8")
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
         filtered_txn.to_excel(writer, index=False, sheet_name="transactions")
 
-    print(f"[unified] rows={len(filtered_txn)} -> {xlsx_path}")
-    print(f"[unified] rows={len(filtered_txn)} -> {csv_path}")
+    log("build_unified", f"行数={len(filtered_txn)} 输出={xlsx_path}")
+    log("build_unified", f"行数={len(filtered_txn)} 输出={csv_path}")
     if getattr(build_unified, "_period", None):
-        print(f"[unified] all  -> {all_xlsx_path}")
-        print(f"[unified] all  -> {all_csv_path}")
+        log("build_unified", f"全量输出={all_xlsx_path}")
+        log("build_unified", f"全量输出={all_csv_path}")
     return xlsx_path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build a single unified output file with abstracted fields.")
+    parser = make_parser("生成统一抽象字段的单表输出文件。")
     parser.add_argument("--out-dir", type=Path, default=Path("output"))
     parser.add_argument("--cc-enriched", type=Path, default=Path("output/credit_card.enriched.csv"))
     parser.add_argument("--cc-unmatched", type=Path, default=Path("output/credit_card.unmatched.csv"))
@@ -481,11 +498,11 @@ def main() -> None:
         year = int(args.period_year)
         month = int(args.period_month)
         if not (1 <= month <= 12):
-            raise SystemExit("--period-month must be 1~12")
+            raise SystemExit("--period-month 必须在 1~12 之间")
         start_year, start_month = (year - 1, 12) if month == 1 else (year, month - 1)
         start_date = date(start_year, start_month, 21)
         end_date = date(year, month, 20)
-        # Attach to function to avoid changing function signature too much.
+        # 临时挂到函数对象上，避免改动函数签名过大。
         build_unified._period = (start_date, end_date, f"{year:04d}-{month:02d}")  # type: ignore[attr-defined]
 
     build_unified(

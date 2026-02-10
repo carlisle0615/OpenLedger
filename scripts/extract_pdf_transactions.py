@@ -1,6 +1,17 @@
+"""extract_pdf：从支持的 PDF 中提取交易记录。
+
+输入：
+- 一个或多个 PDF 文件（招行信用卡对账单、招行交易流水）。
+
+输出：
+- `<out-dir>/*.transactions.csv`
+
+示例：
+- `uv run python scripts/extract_pdf_transactions.py --out-dir output *.pdf`
+"""
+
 from __future__ import annotations
 
-import argparse
 import csv
 import re
 from dataclasses import dataclass
@@ -11,13 +22,15 @@ from typing import Iterable, Iterator, Literal
 
 import pdfplumber
 
+from _common import log, make_parser
+
 
 def _to_decimal(value: str) -> Decimal:
     cleaned = value.replace(",", "").strip()
     try:
         return Decimal(cleaned)
-    except InvalidOperation as exc:  # pragma: no cover - defensive
-        raise ValueError(f"Invalid decimal: {value!r}") from exc
+    except InvalidOperation as exc:  # pragma: no cover - 防御性分支
+        raise ValueError(f"无效的小数: {value!r}") from exc
 
 
 def _parse_statement_year_month(text: str) -> tuple[int, int] | None:
@@ -59,7 +72,7 @@ def extract_cmb_credit_card_statement(pdf_path: Path) -> list[CreditCardTxn]:
         first_text = (pdf.pages[0].extract_text() or "").strip()
         ym = _parse_statement_year_month(first_text)
         if not ym:
-            raise ValueError("Cannot detect statement year/month from first page.")
+            raise ValueError("无法从第一页识别账单年月。")
         statement_year, statement_month = ym
 
         section: _CC_SECTION | None = None
@@ -118,7 +131,7 @@ def extract_cmb_credit_card_statement(pdf_path: Path) -> list[CreditCardTxn]:
                 rest = line[m.end() :].strip()
                 tail = tail_re.match(rest)
                 if not tail:
-                    # Some long descriptions may wrap; fall back to a looser parse.
+                    # 部分长描述会换行，尽量用更宽松的策略兜底解析。
                     parts = rest.split()
                     if len(parts) < 3:
                         continue
@@ -170,14 +183,14 @@ class BankTxn:
 
 
 def _extract_cmb_account_last4(first_page_text: str) -> str | None:
-    # Example: "户 名：张三 账号：6214********9601"
+    # 示例："户 名：张三 账号：6214********9601"
     m = re.search(r"账号：\s*(\S+)", first_page_text)
     if m:
         token = m.group(1).strip()
         tail = re.search(r"(\d{4})$", token)
         if tail:
             return tail.group(1)
-    # Fallback: grab the first 4-digit tail after '账号：'
+    # 兜底：拿到 '账号：' 后面出现的第一个 4 位尾号。
     m = re.search(r"账号：.*?(\d{4})\b", first_page_text)
     if m:
         return m.group(1)
@@ -228,10 +241,10 @@ def extract_cmb_transaction_statement(pdf_path: Path) -> list[BankTxn]:
             return False
         if date_re.match(text) or footer_re.match(text):
             return False
-        # Avoid picking up numeric-only junk.
+        # 避免把纯数字/噪声行当成对方户名。
         if re.fullmatch(r"-?\d[\d,]*\.\d{2}", text):
             return False
-        # Common non-merchant lines that sometimes appear as standalone.
+        # 常见“非商户”独立行（pdfplumber 抽取时偶发）。
         if any(k in text for k in ["记账日期", "交易日期", "Transaction", "Date", "Currency", "Amount", "Balance"]):
             return False
         return True
@@ -292,12 +305,12 @@ def extract_cmb_transaction_statement(pdf_path: Path) -> list[BankTxn]:
 
                 if current:
                     extra = line
-                    # Some PDFs wrap the counterparty into the next line (common for fund "专户"),
-                    # but there are also stray standalone lines (e.g. "鹏华基金管理有限公司销售汇总",
-                    # "应付利息-...") that belong to other columns. To avoid contaminating
-                    # counterparty, treat the line as a continuation only when we have
-                    # strong signals (missing counterparty, or unclosed parenthesis, or
-                    # line starts with a closing parenthesis).
+                    # 有些 PDF 会把“对方户名”换到下一行（基金类“专户”更常见），但也存在无关的独立行
+                    #（例如“鹏华基金管理有限公司销售汇总”“应付利息-...”）。为避免污染对方户名字段，
+                    # 只在信号足够强时才把下一行拼接进去：
+                    # 1) 当前对方户名为空，或
+                    # 2) 当前对方户名括号未闭合，或
+                    # 3) 下一行以右括号开头。
                     cur_cp = (current.counterparty or "").strip()
                     if not cur_cp:
                         current = BankTxn(
@@ -320,8 +333,8 @@ def extract_cmb_transaction_statement(pdf_path: Path) -> list[BankTxn]:
                             counterparty=join_counterparty(cur_cp, extra),
                         )
                     elif is_counterparty_fragment(extra):
-                        # pdfplumber may reorder wrapped text blocks and put the first
-                        # fragment of a wrapped counterparty line *before* its date row.
+                        # pdfplumber 可能重排换行文本块，把对方户名的第一段放到日期行之前；
+                        # 这里先暂存，待下一条交易落地时再回填。
                         pending_counterparty = (
                             extra.strip()
                             if not pending_counterparty
@@ -356,9 +369,9 @@ def _write_csv(rows: Iterable[dict[str, object]], out_path: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract transactions from supported PDFs.")
+    parser = make_parser("从支持的 PDF 中提取交易记录。")
     parser.add_argument("pdf", type=Path, nargs="+")
-    parser.add_argument("--out-dir", type=Path, default=Path("output"))
+    parser.add_argument("--out-dir", type=Path, default=Path("output"), help="输出目录。")
     args = parser.parse_args()
 
     for pdf_path in args.pdf:
@@ -383,7 +396,7 @@ def main() -> None:
                 ),
                 out_path,
             )
-            print(f"[{kind}] {pdf_path} -> {out_path} rows={len(txns)}")
+            log("extract_pdf", f"类型={kind} 输入={pdf_path} 输出={out_path} 行数={len(txns)}")
         elif kind == "cmb_statement":
             txns = extract_cmb_transaction_statement(pdf_path)
             out_path = args.out_dir / f"{pdf_path.stem}.transactions.csv"
@@ -403,9 +416,9 @@ def main() -> None:
                 ),
                 out_path,
             )
-            print(f"[{kind}] {pdf_path} -> {out_path} rows={len(txns)}")
+            log("extract_pdf", f"类型={kind} 输入={pdf_path} 输出={out_path} 行数={len(txns)}")
         else:
-            print(f"[unknown] {pdf_path}: unsupported PDF type")
+            log("extract_pdf", f"类型=未知 输入={pdf_path} 错误=不支持的PDF类型")
 
 
 if __name__ == "__main__":

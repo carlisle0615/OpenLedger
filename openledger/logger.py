@@ -44,7 +44,7 @@ def get_logger():
     try:
         from loguru import logger as _logger  # type: ignore
     except Exception:
-        # Minimal fallback (still prints progress).
+        # 最小兜底实现（即使缺少 loguru 也能输出进度信息）。
         return _FallbackLogger(_emit=lambda s: print(s, file=sys.stdout, flush=True), _extra={"run_id": "-", "stage_id": "-"})
 
     _logger.remove()

@@ -45,8 +45,10 @@ import { ReviewModal } from "@/components/ReviewModal";
 
 
 export default function App() {
-  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("aa_baseUrl") || "http://127.0.0.1:8000");
-  const [apiToken, setApiToken] = useState(() => localStorage.getItem("aa_apiToken") || "");
+  const [baseUrl, setBaseUrl] = useState(
+    () => localStorage.getItem("openledger_baseUrl") || "http://127.0.0.1:8000",
+  );
+  const [apiToken, setApiToken] = useState(() => localStorage.getItem("openledger_apiToken") || "");
   const [runs, setRuns] = useState<string[]>([]);
   const [runId, setRunId] = useState<string>("");
   const [runsMeta, setRunsMeta] = useState<RunMeta[]>([]);
@@ -93,11 +95,11 @@ export default function App() {
   const lastOptionEdit = useRef<number>(0);
 
   useEffect(() => {
-    localStorage.setItem("aa_baseUrl", baseUrl);
+    localStorage.setItem("openledger_baseUrl", baseUrl);
   }, [baseUrl]);
 
   useEffect(() => {
-    localStorage.setItem("aa_apiToken", apiToken);
+    localStorage.setItem("openledger_apiToken", apiToken);
   }, [apiToken]);
 
   useEffect(() => {

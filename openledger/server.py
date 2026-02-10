@@ -84,7 +84,7 @@ _DISPOSITION_RE = re.compile(
 
 
 def _parse_multipart(body: bytes, boundary: bytes) -> list[dict[str, Any]]:
-    # Very small multipart parser (sufficient for local uploads).
+    # 极简 multipart 解析器（满足本地上传场景即可）。
     out: list[dict[str, Any]] = []
     delim = b"--" + boundary
     for part in body.split(delim):
@@ -110,7 +110,7 @@ def _parse_multipart(body: bytes, boundary: bytes) -> list[dict[str, Any]]:
             continue
         name = m.group("name")
         filename = m.group("filename")
-        # Strip final CRLF
+        # 去掉末尾 CRLF
         if content.endswith(b"\r\n"):
             content = content[:-2]
         out.append(
@@ -448,7 +448,7 @@ def make_handler(server: WorkflowHTTPServer):
                 )
                 return
 
-            # Static frontend (optional): serve web/dist if present.
+            # 静态前端（可选）：如果 web/dist 存在则直接托管。
             dist = root / "web" / "dist"
             if dist.exists():
                 self._serve_static(dist, path)
@@ -481,7 +481,7 @@ def make_handler(server: WorkflowHTTPServer):
             if target.is_dir():
                 target = target / "index.html"
             if not target.exists():
-                # SPA fallback
+                # SPA 路由兜底（让前端自己处理路径）。
                 target = dist / "index.html"
             data = target.read_bytes()
             mime, _ = mimetypes.guess_type(target.name)
@@ -490,7 +490,7 @@ def make_handler(server: WorkflowHTTPServer):
             _set_cors(self)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(len(data)))
-            # Avoid stale UI after rebuilds (local app).
+            # 避免本地重建后 UI 被浏览器缓存导致不刷新。
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
@@ -501,7 +501,7 @@ def make_handler(server: WorkflowHTTPServer):
 
             if path == "/api/runs":
                 paths = create_run(root)
-                # Optional name from JSON body.
+                # 允许从 JSON body 读取可选 name。
                 name = ""
                 try:
                     raw = _read_request_body(self)
@@ -516,7 +516,7 @@ def make_handler(server: WorkflowHTTPServer):
                     state["name"] = name[:80]
                     save_state(paths, state)
                 server.logger.bind(run_id=paths.run_dir.name, stage_id="-").info(
-                    "Run created"
+                    "已创建 Run"
                 )
                 _send_json(self, 200, get_state(paths))
                 return
@@ -593,7 +593,7 @@ def make_handler(server: WorkflowHTTPServer):
                 state["inputs"] = saved
                 save_state(paths, state)
                 server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"Uploaded files: {len(saved)}"
+                    f"已上传文件数: {len(saved)}"
                 )
                 _send_json(self, 200, {"saved": saved})
                 return
@@ -613,7 +613,7 @@ def make_handler(server: WorkflowHTTPServer):
                 )
                 server.runner.start(run_id, stages=stages, options=options)
                 server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"Run start requested (stages={stages or 'all'})"
+                    f"已请求启动 Run（stages={stages or 'all'}）"
                 )
                 _send_json(self, 200, {"ok": True, "run_id": run_id})
                 return
@@ -623,7 +623,7 @@ def make_handler(server: WorkflowHTTPServer):
                 run_id = m.group("run_id")
                 server.runner.request_cancel(run_id)
                 server.logger.bind(run_id=run_id, stage_id="-").warning(
-                    "Cancel requested via API"
+                    "已通过 API 请求取消"
                 )
                 _send_json(self, 200, {"ok": True})
                 return
@@ -672,7 +672,7 @@ def make_handler(server: WorkflowHTTPServer):
                 state["cancel_requested"] = False
                 save_state(paths, state)
                 server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"Reset done (scope={scope})"
+                    f"重置完成（scope={scope}）"
                 )
                 _send_json(self, 200, {"ok": True, "scope": scope})
                 return
@@ -734,7 +734,7 @@ def make_handler(server: WorkflowHTTPServer):
                 tmp_path.replace(review_path)
 
                 server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"Review updated rows={len(update_map)}"
+                    f"已更新 review.csv 行数={len(update_map)}"
                 )
                 _send_json(self, 200, {"ok": True, "updated": len(update_map)})
                 return
@@ -757,7 +757,7 @@ def make_handler(server: WorkflowHTTPServer):
                     encoding="utf-8",
                 )
                 server.logger.bind(run_id="-", stage_id="-").info(
-                    "Global classifier config updated"
+                    "已更新全局分类器配置"
                 )
                 _send_json(self, 200, {"ok": True})
                 return
@@ -776,7 +776,7 @@ def make_handler(server: WorkflowHTTPServer):
                     encoding="utf-8",
                 )
                 server.logger.bind(run_id=run_id, stage_id="-").info(
-                    "Classifier config updated"
+                    "已更新本次 Run 的分类器配置"
                 )
                 _send_json(self, 200, {"ok": True})
                 return
@@ -793,7 +793,7 @@ def make_handler(server: WorkflowHTTPServer):
                 state.setdefault("options", {}).update(payload)
                 save_state(paths, state)
                 server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"Options updated: {payload}"
+                    f"已更新 options: {payload}"
                 )
                 _send_json(self, 200, {"ok": True})
                 return
@@ -801,7 +801,7 @@ def make_handler(server: WorkflowHTTPServer):
             _send_json(self, 404, {"error": "not found"})
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
-            # Quieter server logs for local usage.
+            # 本地使用时尽量保持安静，避免 http.server 默认日志刷屏。
             return
 
     return Handler
@@ -815,7 +815,7 @@ def serve(
     httpd = ThreadingHTTPServer((host, port), handler)
 
     url = f"http://{host}:{port}"
-    server.logger.bind(run_id="-", stage_id="-").info(f"UI server -> {url}")
+    server.logger.bind(run_id="-", stage_id="-").info(f"UI 服务地址 -> {url}")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
 

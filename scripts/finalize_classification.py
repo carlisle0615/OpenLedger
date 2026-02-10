@@ -1,10 +1,25 @@
+"""finalize：将审核结果合并为最终产物（明细 + 汇总）。
+
+输入：
+- `unified.with_id.csv`（来自 `classify` 阶段）
+- `review.csv`（人工审核/编辑）
+- 分类器配置（`config/classifier.json` 或 `config/classifier.local.json`）
+
+输出：
+- `<out-dir>/unified.transactions.categorized.csv`
+- `<out-dir>/unified.transactions.categorized.xlsx`（两个 sheet：明细/汇总）
+- `<out-dir>/category.summary.csv`
+- `<out-dir>/pending_review.csv`（仅当仍需要人工审核时生成）
+"""
+
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 
 import pandas as pd
+
+from _common import log, make_parser
 
 
 def default_classifier_config_path() -> Path:
@@ -40,7 +55,7 @@ def finalize(
     categories = config.get("categories", [])
     category_map = {c["id"]: c.get("name", "") for c in categories if "id" in c}
     if "other" not in category_map:
-        raise SystemExit("config.categories must include id=other.")
+        raise SystemExit("config.categories 必须包含 id=other。")
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -58,7 +73,7 @@ def finalize(
     }
     missing = sorted(required_cols - set(review.columns))
     if missing:
-        raise SystemExit(f"review.csv missing columns: {missing}")
+        raise SystemExit(f"review.csv 缺少列: {missing}")
 
     review["suggested_uncertain_bool"] = review["suggested_uncertain"].map(_parse_bool)
     review["final_category_id"] = review["final_category_id"].astype(str).str.strip()
@@ -106,7 +121,7 @@ def finalize(
             lambda r: (r["category_id"] if bool(r["invalid_category_bool"]) else ""),
             axis=1,
         )
-        # Be resilient to config changes after review.csv was generated: fallback to other.
+        # review.csv 生成后配置可能变更；对无效的 category_id 做兜底回退到 other。
         review.loc[review["invalid_category_bool"], "category_id"] = "other"
     else:
         review["invalid_category_id"] = ""
@@ -123,8 +138,8 @@ def finalize(
             pending_path = out_dir / "pending_review.csv"
             needs.to_csv(pending_path, index=False, encoding="utf-8")
             raise SystemExit(
-                f"Found {len(needs)} rows needing manual review (uncertain or invalid category_id). "
-                f"Please review and fill final_category_id. Pending list: {pending_path}"
+                f"发现 {len(needs)} 行仍需人工确认（不确定/或 category_id 无效）。"
+                f"请在 review.csv 中填写 final_category_id。待处理清单: {pending_path}"
             )
 
     review["category_name"] = review["category_id"].map(lambda cid: category_map.get(cid, ""))
@@ -168,7 +183,7 @@ def finalize(
         how="left",
     )
 
-    # Drop columns (manual + config)
+    # 删列（来自命令行 + 配置）。
     drop_from_config = [c for c in config.get("drop_output_columns", []) if isinstance(c, str)]
     drops = {c.strip() for c in (drop_from_config + drop_cols) if c.strip()}
     for col in sorted(drops):
@@ -179,7 +194,7 @@ def finalize(
     report_xlsx = out_dir / "unified.transactions.categorized.xlsx"
     merged.to_csv(detailed_csv, index=False, encoding="utf-8")
 
-    # Aggregation by category
+    # 按分类聚合汇总。
     agg = merged.copy()
     agg["amount_num"] = pd.to_numeric(agg.get("amount", ""), errors="coerce")
     if "flow" not in agg.columns:
@@ -218,30 +233,30 @@ def finalize(
     summary_csv = out_dir / "category.summary.csv"
     summary.to_csv(summary_csv, index=False, encoding="utf-8")
 
-    # One Excel workbook with two sheets (detail + summary).
+    # 单个 Excel 工作簿，包含两个 sheet（明细 + 汇总）。
     with pd.ExcelWriter(report_xlsx, engine="openpyxl") as writer:
         merged.to_excel(writer, index=False, sheet_name="明细")
         summary.to_excel(writer, index=False, sheet_name="汇总")
 
-    # Remove legacy summary workbook if present to avoid confusion/stale artifacts.
+    # 清理历史遗留的 summary workbook，避免混淆/过期产物残留。
     legacy_summary_xlsx = out_dir / "category.summary.xlsx"
     try:
         legacy_summary_xlsx.unlink()
     except FileNotFoundError:
         pass
 
-    print(f"[finalize] excel   -> {report_xlsx}")
-    print(f"[finalize] detailed -> {detailed_csv}")
-    print(f"[finalize] summary  -> {summary_csv}")
+    log("finalize", f"Excel={report_xlsx}")
+    log("finalize", f"明细CSV={detailed_csv}")
+    log("finalize", f"汇总CSV={summary_csv}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Finalize LLM classifications after manual review.")
+    parser = make_parser("合并审核结果，生成最终明细与汇总。")
     parser.add_argument(
         "--config",
         type=Path,
         default=default_classifier_config_path(),
-        help="Classifier config path (default: prefer config/classifier.local.json if present).",
+        help="分类器配置路径（默认：优先使用 config/classifier.local.json）。",
     )
     parser.add_argument("--unified-with-id", type=Path, default=Path("output/classify/unified.with_id.csv"))
     parser.add_argument("--review", type=Path, default=Path("output/classify/review.csv"))
