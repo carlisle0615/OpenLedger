@@ -7,17 +7,43 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal, TypedDict, TypeAlias, overload
 
 import pdfplumber
 
-MODE_ID = "cmb"
-MODE_NAME = "招商银行（信用卡对账单/交易流水）"
+MODE_ID: Final[Literal["cmb"]] = "cmb"
+MODE_NAME: Final[str] = "招商银行（信用卡对账单/交易流水）"
 
-Kind = Literal["cmb_credit_card", "cmb_statement"]
+CmbKind: TypeAlias = Literal["cmb_credit_card", "cmb_statement"]
 
 
-def detect_kind_from_text(first_page_text: str) -> Kind | None:
+class CmbCreditCardRow(TypedDict):
+    source: Literal["cmb_credit_card"]
+    section: str
+    trans_date: str
+    post_date: str
+    description: str
+    amount_rmb: str
+    card_last4: str
+    original_amount: str
+    original_region: str
+
+
+class CmbStatementRow(TypedDict):
+    source: Literal["cmb_statement"]
+    account_last4: str
+    trans_date: str
+    currency: str
+    amount: str
+    balance: str
+    summary: str
+    counterparty: str
+
+
+CmbRow: TypeAlias = CmbCreditCardRow | CmbStatementRow
+
+
+def detect_kind_from_text(first_page_text: str) -> CmbKind | None:
     text = (first_page_text or "").strip()
     if "招商银行信用卡对账单" in text or "CMB Credit Card Statement" in text:
         return "cmb_credit_card"
@@ -346,39 +372,50 @@ def extract_cmb_transaction_statement(pdf_path: Path) -> list[BankTxn]:
     return txns
 
 
-def extract_rows(pdf_path: Path, kind: Kind) -> list[dict[str, object]]:
+@overload
+def extract_rows(pdf_path: Path, kind: Literal["cmb_credit_card"]) -> list[CmbCreditCardRow]: ...
+
+
+@overload
+def extract_rows(pdf_path: Path, kind: Literal["cmb_statement"]) -> list[CmbStatementRow]: ...
+
+
+def extract_rows(pdf_path: Path, kind: CmbKind) -> list[CmbRow]:
     if kind == "cmb_credit_card":
         txns = extract_cmb_credit_card_statement(pdf_path)
-        return [
-            {
-                "source": kind,
-                "section": t.section,
-                "trans_date": t.trans_date.isoformat(),
-                "post_date": t.post_date.isoformat() if t.post_date else "",
-                "description": t.description,
-                "amount_rmb": str(t.amount_rmb),
-                "card_last4": t.card_last4 or "",
-                "original_amount": str(t.original_amount) if t.original_amount is not None else "",
-                "original_region": t.original_region or "",
-            }
-            for t in txns
-        ]
+        rows: list[CmbCreditCardRow] = []
+        for t in txns:
+            rows.append(
+                {
+                    "source": "cmb_credit_card",
+                    "section": t.section,
+                    "trans_date": t.trans_date.isoformat(),
+                    "post_date": t.post_date.isoformat() if t.post_date else "",
+                    "description": t.description,
+                    "amount_rmb": str(t.amount_rmb),
+                    "card_last4": t.card_last4 or "",
+                    "original_amount": str(t.original_amount) if t.original_amount is not None else "",
+                    "original_region": t.original_region or "",
+                }
+            )
+        return rows
 
     if kind == "cmb_statement":
         txns = extract_cmb_transaction_statement(pdf_path)
-        return [
-            {
-                "source": kind,
-                "account_last4": t.account_last4 or "",
-                "trans_date": t.trans_date.isoformat(),
-                "currency": t.currency,
-                "amount": str(t.amount),
-                "balance": str(t.balance) if t.balance is not None else "",
-                "summary": t.summary or "",
-                "counterparty": t.counterparty or "",
-            }
-            for t in txns
-        ]
+        rows2: list[CmbStatementRow] = []
+        for t in txns:
+            rows2.append(
+                {
+                    "source": "cmb_statement",
+                    "account_last4": t.account_last4 or "",
+                    "trans_date": t.trans_date.isoformat(),
+                    "currency": t.currency,
+                    "amount": str(t.amount),
+                    "balance": str(t.balance) if t.balance is not None else "",
+                    "summary": t.summary or "",
+                    "counterparty": t.counterparty or "",
+                }
+            )
+        return rows2
 
     raise ValueError(f"不支持的 PDF kind: {kind}")
-

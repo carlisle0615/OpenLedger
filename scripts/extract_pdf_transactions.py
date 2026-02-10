@@ -17,7 +17,7 @@ from __future__ import annotations
 import csv
 import sys
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Iterable
 
 import pdfplumber
 
@@ -28,10 +28,18 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from openledger.parsers.pdf import get_pdf_parser, iter_pdf_parsers, list_pdf_modes  # noqa: E402
+from openledger.parsers.pdf import (  # noqa: E402
+    PdfParser,
+    PdfParserKind,
+    PdfRow,
+    parse_pdf_mode_id,
+    get_pdf_parser,
+    iter_pdf_parsers,
+    list_pdf_modes,
+)
 
 
-def _write_csv(rows: Iterable[dict[str, object]], out_path: Path) -> None:
+def _write_csv(rows: Iterable[PdfRow], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     rows = list(rows)
     if not rows:
@@ -80,14 +88,15 @@ def main() -> None:
     if not pdfs:
         raise SystemExit("未提供 PDF 文件；请传入一个或多个 *.pdf，或使用 --list-modes 查看支持的解析器。")
 
-    mode_id = (str(args.mode or "").strip() or "auto").lower()
-    supported = [m["id"] for m in list_pdf_modes()]
-    if mode_id != "auto" and mode_id not in supported:
+    try:
+        mode_id = parse_pdf_mode_id(args.mode)
+    except ValueError as exc:
+        supported = [m["id"] for m in list_pdf_modes()]
         raise SystemExit(
-            f"未知 --mode: {mode_id}\n"
-            f"支持的 --mode: {', '.join(supported)}\n"
+            f"未知 --mode: {args.mode}\n"
+            f"支持的 --mode: {', '.join([str(x) for x in supported])}\n"
             "可用 `uv run python scripts/extract_pdf_transactions.py --list-modes` 查看详细列表。\n"
-        )
+        ) from exc
 
     errors: list[str] = []
 
@@ -101,28 +110,21 @@ def main() -> None:
             log("extract_pdf", f"失败 输入={pdf_path} 错误={msg}")
             continue
 
-        parser_mod: Any | None = None
-        kind: str | None = None
+        parser_mod: PdfParser | None = None
+        kind: PdfParserKind | None = None
 
         if mode_id == "auto":
             for mod in iter_pdf_parsers():
-                try:
-                    k = mod.detect_kind_from_text(first_text)
-                except Exception:
-                    k = None
+                k = mod.detect_kind_from_text(first_text)
                 if k:
                     parser_mod = mod
                     kind = k
                     break
         else:
-            try:
-                parser_mod = get_pdf_parser(mode_id)
-            except KeyError:
-                parser_mod = None
-            if parser_mod is not None:
-                kind = parser_mod.detect_kind_from_text(first_text)
+            parser_mod = get_pdf_parser(mode_id)
+            kind = parser_mod.detect_kind_from_text(first_text)
 
-        if parser_mod is None or not kind:
+        if parser_mod is None or kind is None:
             msg = f"无法识别 PDF 类型（mode={mode_id}）"
             errors.append(f"{pdf_path}: {msg}")
             log("extract_pdf", f"失败 输入={pdf_path} 错误={msg}")
@@ -131,7 +133,7 @@ def main() -> None:
         try:
             rows = parser_mod.extract_rows(pdf_path, kind)
         except Exception as exc:
-            msg = f"解析失败（mode={getattr(parser_mod,'MODE_ID','?')} kind={kind}）: {exc}"
+            msg = f"解析失败（mode={parser_mod.mode_id} kind={kind}）: {exc}"
             errors.append(f"{pdf_path}: {msg}")
             log("extract_pdf", f"失败 输入={pdf_path} 错误={msg}")
             continue
@@ -139,7 +141,7 @@ def main() -> None:
         _write_csv(rows, out_path)
         log(
             "extract_pdf",
-            f"成功 mode={getattr(parser_mod,'MODE_ID','?')} kind={kind} 输入={pdf_path} 输出={out_path} 行数={len(rows)}",
+            f"成功 mode={parser_mod.mode_id} kind={kind} 输入={pdf_path} 输出={out_path} 行数={len(rows)}",
         )
 
     # 严格失败策略：任意文件失败，则整个阶段失败（返回非 0）。

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -45,6 +46,13 @@ UNIFIED_COLUMNS = [
     "match_status",
     "remark",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class Period:
+    start_date: date
+    end_date: date
+    label: str
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -436,6 +444,7 @@ def build_unified(
     wechat_norm_path: Path,
     alipay_norm_path: Path,
     out_dir: Path,
+    period: Period | None = None,
 ) -> Path:
     cc_required = ["section", "trans_date", "post_date", "description", "amount_rmb", "card_last4", "match_status"]
     bank_required = ["account_last4", "trans_date", "currency", "amount", "summary", "counterparty", "match_status"]
@@ -477,8 +486,8 @@ def build_unified(
 
     filtered_txn = all_txn
 
-    if getattr(build_unified, "_period", None):
-        start_date, end_date, label = build_unified._period  # type: ignore[attr-defined]
+    if period is not None:
+        start_date, end_date, label = period.start_date, period.end_date, period.label
         all_txn.to_csv(all_csv_path, index=False, encoding="utf-8")
         with pd.ExcelWriter(all_xlsx_path, engine="openpyxl") as writer:
             all_txn.to_excel(writer, index=False, sheet_name="transactions")
@@ -496,7 +505,7 @@ def build_unified(
 
     log("build_unified", f"行数={len(filtered_txn)} 输出={xlsx_path}")
     log("build_unified", f"行数={len(filtered_txn)} 输出={csv_path}")
-    if getattr(build_unified, "_period", None):
+    if period is not None:
         log("build_unified", f"全量输出={all_xlsx_path}")
         log("build_unified", f"全量输出={all_csv_path}")
     return xlsx_path
@@ -515,8 +524,7 @@ def main() -> None:
     parser.add_argument("--period-month", type=int, default=None)
     args = parser.parse_args()
 
-    if hasattr(build_unified, "_period"):
-        delattr(build_unified, "_period")  # type: ignore[attr-defined]
+    period: Period | None = None
 
     if args.period_year and args.period_month:
         year = int(args.period_year)
@@ -526,8 +534,7 @@ def main() -> None:
         start_year, start_month = (year - 1, 12) if month == 1 else (year, month - 1)
         start_date = date(start_year, start_month, 21)
         end_date = date(year, month, 20)
-        # 临时挂到函数对象上，避免改动函数签名过大。
-        build_unified._period = (start_date, end_date, f"{year:04d}-{month:02d}")  # type: ignore[attr-defined]
+        period = Period(start_date=start_date, end_date=end_date, label=f"{year:04d}-{month:02d}")
 
     build_unified(
         cc_enriched_path=args.cc_enriched,
@@ -537,6 +544,7 @@ def main() -> None:
         wechat_norm_path=args.wechat,
         alipay_norm_path=args.alipay,
         out_dir=args.out_dir,
+        period=period,
     )
 
 
