@@ -90,7 +90,7 @@ uv run python -m stages.extract_exports
 uv run python -m stages.match_credit_card
 uv run python -m stages.match_bank
 uv run python -m stages.build_unified
-node stages/classify_openrouter.mjs
+node stages/classify_llm.mjs
 uv run python -m stages.finalize
 ```
 
@@ -101,8 +101,9 @@ PDF 解析模式：
 分类阶段：
 - 分类规则放在 `config/classifier.json`
 - 推荐本地覆盖 `config/classifier.local.json`（避免误提交）
-- 需要 `OPENROUTER_API_KEY`（参考 `.env.example`）
-- LSP 可自配：默认示例脚本基于 OpenRouter，可替换 `stages/classify_openrouter.mjs` 接入你的 LSP
+- 分类器 LSP 配置见 `lsp` 字段（Provider / API Key / base_url 等），细节参考 `docs/lsp.md`
+- LSP 可自配：默认脚本基于 LangChain，可选择不同 Provider（OpenRouter / Ollama / Tongyi / DeepSeek / Kimi / MiniMax）
+- 首次使用 LSP：在仓库根目录执行 `pnpm install` 安装依赖
 
 ## 输出产物（摘要）
 
@@ -139,6 +140,7 @@ uv run python -m tools.batch_ignore_review_before_date --review <path> --cutoff 
 - `.env`（密钥）
 - `bills/`、`output/`、`runs/`、`tmp/`（账单与产物）
 - `config/classifier.local.json`（个人规则）
+- `config/classifier.private.json`（个人 LSP 配置示例，不提交）
 
 ## 贡献
 

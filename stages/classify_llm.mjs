@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { buildLspModel, resolveLspConfig, validateLspConfig } from "./lsp/index.mjs";
 
 /**
  * classify：对 unified.transactions.csv 进行规则/LLM 分类，并生成 review.csv 供人工审核。
@@ -16,8 +18,6 @@ import path from "node:path";
  * - `batches/batch_*.json`：LLM 批次审计（raw output、usage 等）
  */
 
-const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-
 const DEFAULT_PUBLIC_CONFIG = "config/classifier.json";
 const DEFAULT_LOCAL_CONFIG = "config/classifier.local.json";
 
@@ -32,10 +32,16 @@ function parseArgs(argv) {
     input: "output/unified.transactions.csv",
     outDir: "output/classify",
     config: defaultClassifierConfigPath(),
-    apiKey: null,
     batchSize: null,
     maxConcurrency: null,
     model: null,
+    provider: null,
+    apiKey: null,
+    apiKeyEnv: null,
+    baseUrl: null,
+    temperature: null,
+    maxTokens: null,
+    minimaxGroupId: null,
     ignoreCols: [],
     maxRows: null,
     dryRun: false,
@@ -54,9 +60,6 @@ function parseArgs(argv) {
     } else if (key === "--config") {
       args.config = next;
       i += 1;
-    } else if (key === "--api-key") {
-      args.apiKey = next;
-      i += 1;
     } else if (key === "--batch-size") {
       args.batchSize = Number(next);
       i += 1;
@@ -65,6 +68,27 @@ function parseArgs(argv) {
       i += 1;
     } else if (key === "--model") {
       args.model = next;
+      i += 1;
+    } else if (key === "--provider") {
+      args.provider = next;
+      i += 1;
+    } else if (key === "--api-key") {
+      args.apiKey = next;
+      i += 1;
+    } else if (key === "--api-key-env") {
+      args.apiKeyEnv = next;
+      i += 1;
+    } else if (key === "--base-url") {
+      args.baseUrl = next;
+      i += 1;
+    } else if (key === "--temperature") {
+      args.temperature = Number(next);
+      i += 1;
+    } else if (key === "--max-tokens") {
+      args.maxTokens = Number(next);
+      i += 1;
+    } else if (key === "--minimax-group-id") {
+      args.minimaxGroupId = next;
       i += 1;
     } else if (key === "--ignore-cols") {
       args.ignoreCols = next.split(",").map((s) => s.trim()).filter(Boolean);
@@ -84,7 +108,6 @@ function parseArgs(argv) {
 }
 
 function loadDotEnvIfNeeded(dotEnvPath = ".env") {
-  if (process.env.OPENROUTER_API_KEY) return;
   if (!fs.existsSync(dotEnvPath)) return;
 
   const text = fs.readFileSync(dotEnvPath, "utf8");
@@ -363,67 +386,24 @@ function extractJson(text) {
   }
 }
 
-async function chatOnce({ apiKey, model, messages, stream }) {
-  const res = await fetch(OPENROUTER_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      stream,
-      temperature: 0,
-    }),
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`OpenRouter 接口错误 ${res.status}: ${errText.slice(0, 4000)}`);
-  }
-
+async function chatOnce({ model, messages, stream }) {
   if (!stream) {
-    const json = await res.json();
+    const resp = await model.invoke(messages);
     return {
-      content: json.choices?.[0]?.message?.content ?? "",
-      usage: json.usage ?? null,
+      content: resp?.content ?? "",
+      usage: resp?.usage_metadata ?? null,
+      raw: resp,
     };
   }
 
-  const decoder = new TextDecoder();
-  let buffer = "";
   let content = "";
   let usage = null;
-
-  for await (const chunk of res.body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    while (true) {
-      const sep = buffer.indexOf("\n\n");
-      if (sep === -1) break;
-      const block = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-
-      for (const line of block.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (data === "[DONE]") {
-          return { content, usage };
-        }
-        let json;
-        try {
-          json = JSON.parse(data);
-        } catch {
-          continue;
-        }
-        const delta = json.choices?.[0]?.delta?.content;
-        if (delta) content += delta;
-        if (json.usage) usage = json.usage;
-      }
-    }
+  for await (const chunk of await model.stream(messages)) {
+    if (chunk?.content) content += chunk.content;
+    if (chunk?.usage_metadata) usage = chunk.usage_metadata;
   }
 
-  return { content, usage };
+  return { content, usage, raw: null };
 }
 
 function buildPrompt({ categories, columns, rows }) {
@@ -493,7 +473,6 @@ function makeReviewRows({ unifiedWithId, suggestions, categoriesById, reviewColu
     const suggestedIgnored = s?.ignored ?? "";
     const suggestedIgnoreReason = s?.ignore_reason ?? "";
     const suggestedSource = s?.mapped_by ?? (s?.model ? "llm" : "");
-    const suggestedRuleId = s?.rule_id ?? "";
     const base = {
       txn_id: r.txn_id,
       suggested_category_id: suggestedCategoryId,
@@ -504,7 +483,7 @@ function makeReviewRows({ unifiedWithId, suggestions, categoriesById, reviewColu
       suggested_ignored: suggestedIgnored,
       suggested_ignore_reason: suggestedIgnoreReason,
       suggested_source: suggestedSource,
-      suggested_rule_id: suggestedRuleId,
+      suggested_rule_id: s?.rule_id ?? "",
       final_category_id: "",
       final_note: "",
       final_ignored: "",
@@ -563,7 +542,6 @@ async function main() {
   loadDotEnvIfNeeded();
 
   const config = readJson(args.config);
-  const model = args.model ?? config.model;
   const batchSize = args.batchSize ?? config.batch_size ?? 10;
   const maxConcurrencyCfg = args.maxConcurrency ?? config.max_concurrency ?? 10;
   const maxConcurrency = Math.min(10, Math.max(1, Math.floor(Number(maxConcurrencyCfg) || 1)));
@@ -575,10 +553,17 @@ async function main() {
   const promptColumns = promptColumnsRaw.filter((c) => !ignoreCols.has(c));
   const reviewColumns = reviewColumnsRaw.filter((c) => !ignoreCols.has(c));
 
-  const apiKey = args.apiKey ?? process.env.OPENROUTER_API_KEY;
-  if (!args.dryRun && (!apiKey || !String(apiKey).trim())) {
-    throw new Error("缺少 OPENROUTER_API_KEY（可写在 .env，或通过 --api-key 传入）。");
-  }
+  const lspConfig = resolveLspConfig(config, {
+    provider: args.provider,
+    model: args.model,
+    apiKey: args.apiKey,
+    apiKeyEnv: args.apiKeyEnv,
+    baseUrl: args.baseUrl,
+    temperature: args.temperature,
+    maxTokens: args.maxTokens,
+    minimaxGroupId: args.minimaxGroupId,
+  });
+  if (!args.dryRun) validateLspConfig(lspConfig);
 
   const outDir = args.outDir;
   ensureDir(outDir);
@@ -679,6 +664,8 @@ async function main() {
     batches.push(llmQueue.slice(offset, offset + batchSize));
   }
 
+  const llmModel = args.dryRun ? null : buildLspModel(lspConfig);
+
   await runWithConcurrency(batches, maxConcurrency, async (batchRows, batchIndex) => {
     const batchNo = batchIndex + 1;
     let resultByTxnId = new Map();
@@ -695,14 +682,13 @@ async function main() {
       }
     } else {
       const { system, user } = buildPrompt({ categories, columns: promptColumns, rows: batchRows });
-      const messages = [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ];
+      const messages = [new SystemMessage(system), new HumanMessage(user)];
 
-      console.log(`[分类] 批次 ${batchNo} 行数=${batchRows.length} 模型=${model}`);
+      console.log(
+        `[分类] 批次 ${batchNo} 行数=${batchRows.length} Provider=${lspConfig.providerName} 模型=${lspConfig.model}`,
+      );
       const startedAt = Date.now();
-      const response = await chatOnce({ apiKey, model, messages, stream: !args.noStream });
+      const response = await chatOnce({ model: llmModel, messages, stream: !args.noStream });
       const elapsedMs = Date.now() - startedAt;
       usage = response.usage;
 
@@ -719,7 +705,8 @@ async function main() {
         auditPath,
         JSON.stringify(
           {
-            model,
+            provider: lspConfig.providerId,
+            model: lspConfig.model,
             batch_no: batchNo,
             batch_size: batchRows.length,
             elapsed_ms: elapsedMs,
@@ -748,9 +735,10 @@ async function main() {
         ignore_reason: "",
         mapped_by: args.dryRun ? "dry_run" : "llm",
         rule_id: "",
-        model,
+        model: lspConfig.model,
         batch_size: batchRows.length,
         usage,
+        provider: lspConfig.providerId,
       };
       suggestions.set(r.txn_id, record);
       appendJsonl(suggestionsPath, record);

@@ -620,7 +620,7 @@ class WorkflowRunner:
             classify_out.mkdir(parents=True, exist_ok=True)
             cmd = [
                 "node",
-                str(root / "stages" / "classify_openrouter.mjs"),
+                str(root / "stages" / "classify_llm.mjs"),
                 "--input",
                 str(paths.out_dir / "unified.transactions.csv"),
                 "--out-dir",

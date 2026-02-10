@@ -9,6 +9,7 @@ __pycache__/
 # Local/private configs & notes (do not commit)
 config/classifier.private.json
 config/classifier.local.json
+config/classifier.public.json
 private/
 
 # Local outputs / intermediate artifacts
@@ -19,6 +20,7 @@ runs/
 # Frontend
 web/node_modules/
 web/dist/
+node_modules/
 
 # 账单文件
 bills/

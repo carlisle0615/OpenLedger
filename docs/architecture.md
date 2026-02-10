@@ -10,6 +10,7 @@ under `runs/` or `output/`.
 - `openledger/`: Backend (stdlib HTTP server + workflow runner).
 - `stages/`: Data processing stages (PDF extract, export normalize, matching, unified output, classify, finalize).
 - `tools/`: Developer/maintenance utilities (probe, batch ops).
+- `docs/lsp.md`: LSP providers and LangChain config.
 
 ## Execution Model (Runs)
 
@@ -30,6 +31,8 @@ There are 3 levels (highest priority first):
 1. `runs/<run_id>/config/classifier.json` (per-run edits from the UI)
 2. `config/classifier.local.json` (local override; ignored by git; recommended for personal tuning)
 3. `config/classifier.json` (public default committed in the repo)
+
+The `lsp` field inside the classifier config controls which LLM provider is used by the classification stage.
 
 ## Backend HTTP API (High Level)
 

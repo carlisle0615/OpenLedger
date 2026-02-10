@@ -18,7 +18,7 @@
 - `match_credit_card` -> `match_credit_card.py`
 - `match_bank` -> `match_bank.py`
 - `build_unified` -> `build_unified.py`
-- `classify` -> `classify_openrouter.mjs`
+- `classify` -> `classify_llm.mjs`
 - `finalize` -> `finalize.py`
 
 ## extract_pdf：PDF 解析模式（mode）
@@ -50,7 +50,7 @@ uv run python -m stages.extract_exports
 uv run python -m stages.match_credit_card
 uv run python -m stages.match_bank
 uv run python -m stages.build_unified
-node stages/classify_openrouter.mjs
+node stages/classify_llm.mjs
 uv run python -m stages.finalize
 ```
 
@@ -63,9 +63,14 @@ uv run python -m stages.extract_exports --out-dir "$RUN/output" --wechat "$RUN/i
 uv run python -m stages.match_credit_card --out-dir "$RUN/output" --credit-card "$RUN/output/<cc>.transactions.csv" --wechat "$RUN/output/wechat.normalized.csv" --alipay "$RUN/output/alipay.normalized.csv"
 uv run python -m stages.match_bank --out-dir "$RUN/output" --wechat "$RUN/output/wechat.normalized.csv" --alipay "$RUN/output/alipay.normalized.csv" "$RUN/output/"*.transactions.csv
 uv run python -m stages.build_unified --out-dir "$RUN/output" --wechat "$RUN/output/wechat.normalized.csv" --alipay "$RUN/output/alipay.normalized.csv"
-node stages/classify_openrouter.mjs --input "$RUN/output/unified.transactions.csv" --out-dir "$RUN/output/classify" --config "$RUN/config/classifier.json"
+node stages/classify_llm.mjs --input "$RUN/output/unified.transactions.csv" --out-dir "$RUN/output/classify" --config "$RUN/config/classifier.json"
 uv run python -m stages.finalize --config "$RUN/config/classifier.json" --unified-with-id "$RUN/output/classify/unified.with_id.csv" --review "$RUN/output/classify/review.csv" --out-dir "$RUN/output"
 ```
+
+### LSP Provider（分类阶段）
+
+`classify_llm.mjs` 通过 `config/classifier.json` 的 `lsp` 字段选择 Provider。更多细节见 `docs/lsp.md`。
+首次使用前，请在仓库根目录执行 `pnpm install` 安装 LangChain 依赖。
 
 ## Tools（开发/维护）
 
