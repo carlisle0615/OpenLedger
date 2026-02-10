@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Local/private configs & notes (do not commit)
+config/classifier.private.json
+config/classifier.local.json
+private/
+
+# Local outputs / intermediate artifacts
+output/
+tmp/
+runs/
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# 账单文件
+bills/

@@ -1,0 +1,18 @@
+[project]
+name = "openledger"
+version = "0.1.0"
+description = "Local multi-source ledger enrichment tool (WeChat/Alipay/CMB) with workflow UI."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "OpenLedger contributors" }]
+keywords = ["ledger", "accounting", "personal-finance", "wechat", "alipay", "cmb"]
+requires-python = ">=3.13"
+dependencies = [
+    "loguru>=0.7.3",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.0",
+    "pdfplumber>=0.11.9",
+    "pypdf>=6.6.2",
+    "python-dateutil>=2.9.0.post0",
+    "rapidfuzz>=3.14.3",
+]

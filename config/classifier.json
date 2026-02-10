@@ -1,0 +1,219 @@
+{
+  "model": "google/gemini-3-flash-preview",
+  "batch_size": 10,
+  "max_concurrency": 10,
+  "uncertain_threshold": 0.6,
+  "ignore_rules": [
+    {
+      "id": "ignore_company_pay",
+      "reason": "因公付不记账（示例规则，可按需删除）",
+      "fields": ["pay_method"],
+      "pattern": "因公付",
+      "flags": "i"
+    },
+    {
+      "id": "ignore_repayment",
+      "reason": "还款不记账（示例规则，可按需调整）",
+      "fields": ["merchant"],
+      "pattern": "还款",
+      "flags": "i"
+    },
+    {
+      "id": "ignore_skipped_non_payment",
+      "reason": "银行流水非支付/理财等不记账（skipped_non_payment）",
+      "when": {
+        "primary_source": "^cmb_statement$"
+      },
+      "fields": ["remark"],
+      "pattern": "skipped_non_payment",
+      "flags": "i"
+    },
+    {
+      "id": "ignore_investment_like",
+      "reason": "理财/基金类不记账（可按需调整/禁用）",
+      "enabled": false,
+      "when": {
+        "primary_source": "^cmb_statement$"
+      },
+      "fields": ["flow", "merchant", "category", "remark"],
+      "pattern": "基金|理财|朝朝宝|赎回|申购",
+      "flags": ""
+    }
+  ],
+  "regex_category_rules": [
+    {
+      "id": "rule_refund_flow",
+      "category_id": "refund",
+      "confidence": 0.98,
+      "uncertain": false,
+      "fields": ["flow"],
+      "pattern": "^refund$",
+      "flags": "i"
+    },
+    {
+      "id": "rule_transfer_flow",
+      "category_id": "red_packet_transfer",
+      "confidence": 0.98,
+      "uncertain": false,
+      "fields": ["flow"],
+      "pattern": "^transfer$",
+      "flags": "i"
+    },
+    {
+      "id": "rule_dining_raw_category",
+      "category_id": "dining",
+      "confidence": 0.9,
+      "uncertain": false,
+      "fields": ["category"],
+      "pattern": "餐饮美食|餐饮|美食|外卖",
+      "flags": ""
+    },
+    {
+      "id": "rule_didi",
+      "category_id": "taxi",
+      "confidence": 0.9,
+      "uncertain": false,
+      "fields": ["merchant", "item", "category"],
+      "pattern": "滴滴|didichuxing",
+      "flags": "i"
+    }
+  ],
+  "categories": [
+    {
+      "id": "clothes",
+      "name": "衣服"
+    },
+    {
+      "id": "electronics",
+      "name": "电子产品"
+    },
+    {
+      "id": "beauty_daily",
+      "name": "美妆日用"
+    },
+    {
+      "id": "dining",
+      "name": "餐饮"
+    },
+    {
+      "id": "fitness",
+      "name": "健身"
+    },
+    {
+      "id": "insurance",
+      "name": "保险"
+    },
+    {
+      "id": "medical",
+      "name": "医疗"
+    },
+    {
+      "id": "flight",
+      "name": "机票"
+    },
+    {
+      "id": "hotel",
+      "name": "酒店"
+    },
+    {
+      "id": "high_speed_rail",
+      "name": "高铁"
+    },
+    {
+      "id": "taxi",
+      "name": "打车"
+    },
+    {
+      "id": "gifts",
+      "name": "礼物"
+    },
+    {
+      "id": "family_activities",
+      "name": "家庭活动"
+    },
+    {
+      "id": "red_packet_transfer",
+      "name": "红包转账"
+    },
+    {
+      "id": "rent",
+      "name": "房租"
+    },
+    {
+      "id": "utilities",
+      "name": "生活缴费"
+    },
+    {
+      "id": "car_loan",
+      "name": "车贷"
+    },
+    {
+      "id": "car_care",
+      "name": "养车"
+    },
+    {
+      "id": "subscription",
+      "name": "订阅"
+    },
+    {
+      "id": "ai",
+      "name": "AI"
+    },
+    {
+      "id": "games",
+      "name": "游戏"
+    },
+    {
+      "id": "salary_wages",
+      "name": "工资薪金"
+    },
+    {
+      "id": "year_end_bonus",
+      "name": "年终奖"
+    },
+    {
+      "id": "government_subsidy",
+      "name": "政府补贴"
+    },
+    {
+      "id": "stock_income",
+      "name": "股票收益"
+    },
+    {
+      "id": "refund",
+      "name": "退款"
+    },
+    {
+      "id": "other",
+      "name": "其他"
+    }
+  ],
+  "prompt_columns": [
+    "trade_date",
+    "trade_time",
+    "post_date",
+    "account",
+    "amount",
+    "flow",
+    "merchant",
+    "item",
+    "category",
+    "pay_method",
+    "sources",
+    "remark"
+  ],
+  "review_columns": [
+    "trade_date",
+    "trade_time",
+    "account",
+    "amount",
+    "flow",
+    "merchant",
+    "item",
+    "category",
+    "pay_method",
+    "sources",
+    "remark"
+  ],
+  "drop_output_columns": []
+}
