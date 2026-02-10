@@ -71,6 +71,7 @@ def init_run_state(run_id: str) -> dict[str, Any]:
         "cancel_requested": False,
         "inputs": [],
         "options": {
+            "pdf_mode": "auto",  # auto（自动识别） | 解析器 id（例如 cmb）
             "classify_mode": "llm",  # llm（调用模型） | dry_run（演练，不调用模型）
             "allow_unreviewed": False,
             # 默认取当前年月（信用卡账期：上月 21 ~ 本月 20）。

@@ -1,7 +1,7 @@
-"""match_bank：将招行借记卡流水与微信/支付宝明细进行匹配回填。
+"""match_bank：将借记卡流水与微信/支付宝明细进行匹配回填。
 
 输入：
-- `extract_pdf_transactions.py` 产出的一个或多个招行流水 CSV
+- `extract_pdf_transactions.py` 产出的一个或多个银行流水 CSV
 - `extract_payment_exports.py` 产出的微信/支付宝标准化 CSV
 
 输出：
@@ -185,10 +185,11 @@ def match_bank_statements(
             chosen = details.loc[best_idx]
 
             out = dict(base)
+            src = str(base.get("source") or "").strip() or "bank_statement"
             out.update(
                 {
                     "match_status": "matched",
-                    "match_sources": f"cmb_statement({account_last4})+{chosen['channel']}",
+                    "match_sources": f"{src}({account_last4})+{chosen['channel']}",
                     "detail_channel": chosen["channel"],
                     "detail_trans_time": chosen["trans_time"],
                     "detail_trans_date": chosen["trans_date"],
@@ -261,7 +262,7 @@ def match_bank_statements(
 
 
 def main() -> None:
-    parser = make_parser("将招行借记卡流水与微信/支付宝明细进行匹配回填。")
+    parser = make_parser("将借记卡流水与微信/支付宝明细进行匹配回填。")
     parser.add_argument("--wechat", type=Path, default=Path("output/wechat.normalized.csv"))
     parser.add_argument("--alipay", type=Path, default=Path("output/alipay.normalized.csv"))
     parser.add_argument("--out-dir", type=Path, default=Path("output"), help="输出目录。")
@@ -271,9 +272,34 @@ def main() -> None:
 
     bank_csvs = list(args.bank_csv)
     if not bank_csvs:
-        bank_csvs = sorted(Path("output").glob("招商银行交易流水*.transactions.csv"))
+        import csv
+
+        required_cols = {
+            "account_last4",
+            "trans_date",
+            "currency",
+            "amount",
+            "balance",
+            "summary",
+            "counterparty",
+        }
+        candidates = sorted(Path("output").glob("*.transactions.csv"))
+        for p in candidates:
+            try:
+                with p.open("r", encoding="utf-8", errors="replace", newline="") as f:
+                    header = next(csv.reader(f), [])
+                cols = {str(x).strip() for x in header if str(x).strip()}
+            except Exception:
+                continue
+            if required_cols.issubset(cols):
+                bank_csvs.append(p)
+        if not bank_csvs:
+            bank_csvs = sorted(Path("output").glob("*交易流水*.transactions.csv"))
     if not bank_csvs:
-        raise SystemExit("在 output/ 下找不到招行流水 CSV；请先运行 extract_pdf_transactions.py。")
+        raise SystemExit(
+            "在 output/ 下找不到可用的借记卡流水 CSV；请先运行 extract_pdf_transactions.py，"
+            "或手动把 bank 类型的 *.transactions.csv 作为参数传入。"
+        )
 
     match_bank_statements(
         bank_csvs=bank_csvs,

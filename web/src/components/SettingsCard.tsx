@@ -3,15 +3,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
-import { RunState } from "@/types";
+import { PdfMode, RunState } from "@/types";
 
 interface SettingsCardProps {
   state: RunState | null;
+  pdfModes: PdfMode[];
   busy: boolean;
   saveOptions: (updates: Partial<any>) => void;
 }
 
-export function SettingsCard({ state, busy, saveOptions }: SettingsCardProps) {
+export function SettingsCard({ state, pdfModes, busy, saveOptions }: SettingsCardProps) {
+  const modes = pdfModes?.length ? pdfModes : [{ id: "auto", name: "自动识别（推荐）" }];
   return (
     <Card>
       <CardHeader className="py-3">
@@ -31,6 +33,25 @@ export function SettingsCard({ state, busy, saveOptions }: SettingsCardProps) {
             <SelectContent>
               <SelectItem value="llm">LLM</SelectItem>
               <SelectItem value="dry_run">Dry Run</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">PDF Mode</span>
+          <Select
+            value={state?.options?.pdf_mode ?? "auto"}
+            onValueChange={(val: string) => saveOptions({ pdf_mode: val })}
+            disabled={!state || busy}
+          >
+            <SelectTrigger className="w-[240px] h-7 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {modes.map((m) => (
+                <SelectItem key={m.id} value={m.id} className="text-xs">
+                  {m.name}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

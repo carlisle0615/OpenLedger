@@ -21,6 +21,25 @@
 - `classify` -> `classify_unified_openrouter.mjs`
 - `finalize` -> `finalize_classification.py`
 
+## extract_pdf：PDF 解析模式（mode）
+
+`extract_pdf_transactions.py` 支持可插拔解析器，并提供 `auto` 自动识别：
+
+- 默认：`--mode auto`（对每个 PDF 读取第一页文本并自动选择解析器）
+- 指定解析器：`--mode <mode_id>`（例如 `--mode cmb`）
+- 查看支持列表：`--list-modes`
+- 严格失败：任意 PDF 无法识别或解析异常，脚本会返回非 0（exit_code=2）以触发工作流阶段失败
+
+### 如何新增一个银行解析器（贡献者）
+
+1) 新增模块：`openledger/parsers/pdf/<mode_id>.py`
+2) 导出常量：`MODE_ID`、`MODE_NAME`
+3) 实现函数：
+- `detect_kind_from_text(first_page_text) -> kind | None`
+- `extract_rows(pdf_path, kind) -> list[dict]`（输出 schema 与现有 CSV 保持一致）
+4) 在 `openledger/parsers/pdf/__init__.py` 注册到 `iter_pdf_parsers()`
+5) 本地验证：`uv run python scripts/extract_pdf_transactions.py --list-modes`
+
 ## 手动跑通（示例）
 
 默认写到根目录的 `output/`：
@@ -47,4 +66,3 @@ uv run python scripts/build_unified_output.py --out-dir "$RUN/output" --wechat "
 node scripts/classify_unified_openrouter.mjs --input "$RUN/output/unified.transactions.csv" --out-dir "$RUN/output/classify" --config "$RUN/config/classifier.json"
 uv run python scripts/finalize_classification.py --config "$RUN/config/classifier.json" --unified-with-id "$RUN/output/classify/unified.with_id.csv" --review "$RUN/output/classify/review.csv" --out-dir "$RUN/output"
 ```
-

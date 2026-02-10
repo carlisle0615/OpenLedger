@@ -18,6 +18,7 @@ export type RunState = {
     current_stage: string | null;
     inputs: { name: string; path: string; size: number }[];
     options: {
+        pdf_mode?: string;
         classify_mode: "llm" | "dry_run";
         allow_unreviewed: boolean;
         period_year: number | null;
@@ -25,6 +26,8 @@ export type RunState = {
     };
     stages: Stage[];
 };
+
+export type PdfMode = { id: string; name: string };
 
 export type ClassifierConfig = {
     model?: string;

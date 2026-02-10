@@ -16,6 +16,7 @@ from typing import Any
 from .config import global_classifier_write_path, resolve_global_classifier_config
 from .files import safe_filename
 from .logger import get_logger
+from .parsers.pdf import list_pdf_modes
 from .settings import load_settings
 from .state import resolve_under_root
 from .workflow import (
@@ -291,6 +292,10 @@ def make_handler(server: WorkflowHTTPServer):
 
             if path == "/api/health":
                 _send_json(self, 200, {"ok": True})
+                return
+
+            if path == "/api/parsers/pdf":
+                _send_json(self, 200, {"modes": list_pdf_modes()})
                 return
 
             if path == "/api/config/classifier":

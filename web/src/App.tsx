@@ -31,6 +31,7 @@ import {
   ClassifierConfig,
   CsvPreview,
   FileItem,
+  PdfMode,
   RunState,
 } from "@/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -52,6 +53,7 @@ export default function App() {
   const [runs, setRuns] = useState<string[]>([]);
   const [runId, setRunId] = useState<string>("");
   const [runsMeta, setRunsMeta] = useState<RunMeta[]>([]);
+  const [pdfModes, setPdfModes] = useState<PdfMode[]>([]);
   const [newRunName, setNewRunName] = useState<string>("");
   const [state, setState] = useState<RunState | null>(null);
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
@@ -168,6 +170,12 @@ export default function App() {
 
   useEffect(() => {
     refreshRuns().catch((e) => setError(String(e)));
+  }, [baseUrl]);
+
+  useEffect(() => {
+    api<{ modes: PdfMode[] }>(baseUrl, "/api/parsers/pdf")
+      .then((r) => setPdfModes(Array.isArray(r?.modes) ? r.modes : []))
+      .catch(() => setPdfModes([{ id: "auto", name: "自动识别（推荐）" }]));
   }, [baseUrl]);
 
   useEffect(() => {
@@ -1015,7 +1023,7 @@ export default function App() {
                 </CardContent>
               </Card>
 
-              <SettingsCard state={state} busy={busy} saveOptions={saveOptions} />
+              <SettingsCard state={state} pdfModes={pdfModes} busy={busy} saveOptions={saveOptions} />
             </div>
 
             {/* Preview Area */}

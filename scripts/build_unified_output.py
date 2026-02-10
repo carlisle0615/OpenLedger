@@ -220,6 +220,7 @@ def _credit_card_rows(cc_enriched: pd.DataFrame, cc_unmatched: pd.DataFrame) -> 
     cc = _ensure_cols(
         cc,
         [
+            "source",
             "section",
             "trans_date",
             "post_date",
@@ -238,8 +239,17 @@ def _credit_card_rows(cc_enriched: pd.DataFrame, cc_unmatched: pd.DataFrame) -> 
     )
     if cc.empty:
         return _empty_unified_df()
-    cc["primary_source"] = "cmb_credit_card"
-    cc["account"] = cc["card_last4"].map(lambda x: f"CMB CreditCard({str(x).strip() or '?'})")
+    cc["primary_source"] = cc.get("source", "credit_card").map(lambda x: str(x).strip() or "credit_card")
+
+    def cc_account(row: pd.Series) -> str:
+        src = str(row.get("primary_source") or "").strip()
+        last4 = str(row.get("card_last4") or "").strip() or "?"
+        if src.endswith("_credit_card"):
+            bank_id = src.split("_", 1)[0].upper()
+            return f"{bank_id} CreditCard({last4})"
+        return f"{src}({last4})" if src else f"CreditCard({last4})"
+
+    cc["account"] = cc.apply(cc_account, axis=1)
     cc["currency"] = "CNY"
     cc["amount_dec"] = cc["amount_rmb"].map(_to_decimal)
     cc["amount_abs_dec"] = cc["amount_dec"].map(lambda d: abs(d))
@@ -280,7 +290,9 @@ def _credit_card_rows(cc_enriched: pd.DataFrame, cc_unmatched: pd.DataFrame) -> 
     cc["pay_method_best"] = cc.apply(lambda r: (r.get("detail_pay_method") or "").strip(), axis=1)
 
     cc["sources"] = cc.apply(
-        lambda r: "cmb_credit_card|" + str(r.get("detail_channel")).strip() if r.get("match_status") == "matched" else "cmb_credit_card",
+        lambda r: f"{r.get('primary_source','')}".strip() + "|" + str(r.get("detail_channel")).strip()
+        if r.get("match_status") == "matched"
+        else f"{r.get('primary_source','')}".strip(),
         axis=1,
     )
     cc["remark_unified"] = cc.apply(
@@ -320,6 +332,7 @@ def _bank_rows(bank_enriched: pd.DataFrame, bank_unmatched: pd.DataFrame) -> pd.
     bank = _ensure_cols(
         bank,
         [
+            "source",
             "account_last4",
             "trans_date",
             "currency",
@@ -338,8 +351,17 @@ def _bank_rows(bank_enriched: pd.DataFrame, bank_unmatched: pd.DataFrame) -> pd.
     )
     if bank.empty:
         return _empty_unified_df()
-    bank["primary_source"] = "cmb_statement"
-    bank["account"] = bank["account_last4"].map(lambda x: f"CMB Debit({str(x).strip() or '?'})")
+    bank["primary_source"] = bank.get("source", "bank_statement").map(lambda x: str(x).strip() or "bank_statement")
+
+    def bank_account(row: pd.Series) -> str:
+        src = str(row.get("primary_source") or "").strip()
+        last4 = str(row.get("account_last4") or "").strip() or "?"
+        if src.endswith("_statement"):
+            bank_id = src.split("_", 1)[0].upper()
+            return f"{bank_id} Debit({last4})"
+        return f"{src}({last4})" if src else f"Debit({last4})"
+
+    bank["account"] = bank.apply(bank_account, axis=1)
     bank["currency"] = bank.get("currency", "CNY").fillna("CNY")
     bank["amount_dec"] = bank["amount"].map(_to_decimal)
     bank["amount_abs_dec"] = bank["amount_dec"].map(lambda d: abs(d))
@@ -369,7 +391,9 @@ def _bank_rows(bank_enriched: pd.DataFrame, bank_unmatched: pd.DataFrame) -> pd.
     bank["pay_method_best"] = bank.apply(lambda r: (r.get("detail_pay_method") or "").strip(), axis=1)
 
     bank["sources"] = bank.apply(
-        lambda r: "cmb_statement|" + str(r.get("detail_channel")).strip() if r.get("match_status") == "matched" else "cmb_statement",
+        lambda r: f"{r.get('primary_source','')}".strip() + "|" + str(r.get("detail_channel")).strip()
+        if r.get("match_status") == "matched"
+        else f"{r.get('primary_source','')}".strip(),
         axis=1,
     )
     bank["remark_unified"] = bank.apply(

@@ -1,4 +1,4 @@
-"""match_credit_card：将招行信用卡账单行与微信/支付宝明细进行匹配回填。
+"""match_credit_card：将信用卡账单行与微信/支付宝明细进行匹配回填。
 
 输入：
 - `extract_pdf_transactions.py` 产出的信用卡账单 CSV
@@ -147,7 +147,7 @@ def match_credit_card(
         hint = ""
         if is_bank_statement:
             hint = (
-                "你传入的看起来是 *招行交易流水* CSV（例如：招商银行交易流水*.transactions.csv）。"
+                "你传入的看起来是 *银行交易流水* CSV（例如：招商银行交易流水*.transactions.csv）。"
                 "请改用 scripts/match_bank_statement_details.py 处理。"
             )
         else:
@@ -232,10 +232,11 @@ def match_credit_card(
         used_detail_idx.add(best_idx)
         chosen = details.loc[best_idx]
         out = dict(base)
+        src = str(base.get("source") or "").strip() or "credit_card"
         out.update(
             {
                 "match_status": "matched",
-                "match_sources": f"cmb_credit_card+{chosen['channel']}",
+                "match_sources": f"{src}+{chosen['channel']}",
                 "detail_channel": chosen["channel"],
                 "detail_trans_time": chosen["trans_time"],
                 "detail_trans_date": chosen["trans_date"],
@@ -303,9 +304,27 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.credit_card is None:
-        matches = sorted(Path("output").glob("*信用卡账单*.transactions.csv"))
+        import csv
+
+        required_cols = {"section", "trans_date", "post_date", "description", "amount_rmb", "card_last4"}
+        candidates = sorted(Path("output").glob("*.transactions.csv"))
+        matches: list[Path] = []
+        for p in candidates:
+            try:
+                with p.open("r", encoding="utf-8", errors="replace", newline="") as f:
+                    header = next(csv.reader(f), [])
+                cols = {str(x).strip() for x in header if str(x).strip()}
+            except Exception:
+                continue
+            if required_cols.issubset(cols):
+                matches.append(p)
         if not matches:
-            raise SystemExit("在 output/ 下找不到信用卡账单 CSV；请先运行 extract_pdf_transactions.py。")
+            matches = sorted(Path("output").glob("*信用卡*.transactions.csv"))
+        if not matches:
+            raise SystemExit(
+                "在 output/ 下找不到可用的信用卡账单 CSV；请先运行 extract_pdf_transactions.py，"
+                "或手动用 --credit-card 指定信用卡类型的 *.transactions.csv。"
+            )
         args.credit_card = matches[0]
 
     match_credit_card(

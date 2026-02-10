@@ -67,8 +67,12 @@ uv sync
 1) **提取 PDF 交易明细**（信用卡 + 交易流水）
 
 ```bash
-uv run python scripts/extract_pdf_transactions.py *.pdf
+uv run python scripts/extract_pdf_transactions.py --mode auto *.pdf
 ```
+
+可选：
+- `--list-modes`：查看当前支持的 PDF 解析器模式
+- `--mode cmb`：强制使用“招商银行（信用卡对账单/交易流水）”解析器
 
 2) **解析并标准化微信/支付宝导出**
 
@@ -130,8 +134,7 @@ uv run python scripts/finalize_classification.py
 
 - `output/wechat.normalized.csv`：微信标准化明细
 - `output/alipay.normalized.csv`：支付宝标准化明细
-- `output/*信用卡账单*.transactions.csv`：信用卡 PDF 提取结果
-- `output/招商银行交易流水*.transactions.csv`：招行流水 PDF 提取结果
+- `output/*.transactions.csv`：PDF 提取结果（信用卡账单/银行流水）
 - `output/credit_card.enriched.csv`：已匹配并回填的信用卡明细（附 `detail_*` 字段）
 - `output/credit_card.unmatched.csv`：未匹配/跳过的信用卡明细（含 `match_status`）
 - `output/credit_card.match.xlsx`：Excel 汇总（`enriched` / `unmatched` 两个 Sheet）

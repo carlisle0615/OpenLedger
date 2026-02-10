@@ -60,6 +60,7 @@ def get_state(paths: Paths) -> dict[str, Any]:
     opts = state.get("options")
     if not isinstance(opts, dict):
         opts = {}
+    opts.setdefault("pdf_mode", "auto")
     opts.setdefault("classify_mode", "llm")
     opts.setdefault("allow_unreviewed", False)
     opts.setdefault("period_year", None)
@@ -485,12 +486,15 @@ class WorkflowRunner:
             pdfs: list[Path] = inputs["pdfs"]
             if not pdfs:
                 raise RuntimeError("未上传 PDF 文件。")
+            pdf_mode = (str(options.get("pdf_mode") or "auto").strip() or "auto").lower()
             cmd = [
                 py,
                 "-u",
                 str(root / "scripts" / "extract_pdf_transactions.py"),
                 "--out-dir",
                 str(paths.out_dir),
+                "--mode",
+                pdf_mode,
             ]
             cmd.extend([str(p) for p in pdfs])
             st_logger.info(f"日志文件: {log_path}")
@@ -556,8 +560,8 @@ class WorkflowRunner:
                 _write_empty_bank_outputs(paths.out_dir)
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 with log_path.open("w", encoding="utf-8") as f:
-                    f.write("[match_bank] 未找到招行流水 CSV，已跳过。\n")
-                st_logger.warning("未找到招行流水 CSV，已跳过 match_bank。")
+                    f.write("[match_bank] 未找到借记卡流水 CSV，已跳过。\n")
+                st_logger.warning("未找到借记卡流水 CSV，已跳过 match_bank。")
                 return 0
             cmd = [
                 py,
