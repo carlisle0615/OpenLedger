@@ -8,6 +8,7 @@ import { FileItem, CsvPreview } from "@/types";
 
 interface PreviewAreaProps {
   selectedFile: FileItem | null;
+  runName: string;
   downloadHref: (path: string) => string;
   previewError: string;
   csvPreview: CsvPreview | null;
@@ -15,7 +16,25 @@ interface PreviewAreaProps {
   loadCsv: (path: string, offset: number) => void;
 }
 
-export function PreviewArea({ selectedFile, downloadHref, previewError, csvPreview, textPreview, loadCsv }: PreviewAreaProps) {
+function sanitizeFilename(value: string) {
+  const cleaned = value
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim();
+  return cleaned;
+}
+
+function ensureExcelExt(value: string) {
+  const lower = value.toLowerCase();
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) return value;
+  return `${value}.xlsx`;
+}
+
+export function PreviewArea({ selectedFile, runName, downloadHref, previewError, csvPreview, textPreview, loadCsv }: PreviewAreaProps) {
+  const isFinalReport = selectedFile?.name === "unified.transactions.categorized.xlsx";
+  const safeRunName = sanitizeFilename(runName || "");
+  const downloadName = isFinalReport && safeRunName ? ensureExcelExt(safeRunName) : undefined;
   return (
     <Card className="min-h-[600px] flex flex-col h-[calc(100vh-250px)]">
       <CardHeader className="py-3 border-b bg-muted/20">
@@ -29,6 +48,7 @@ export function PreviewArea({ selectedFile, downloadHref, previewError, csvPrevi
               href={downloadHref(selectedFile.path)}
               target="_blank"
               rel="noreferrer"
+              download={downloadName}
               className="text-xs flex items-center gap-1 hover:underline text-primary"
             >
               <Download className="h-3 w-3" /> 下载

@@ -2,14 +2,14 @@ import { Loader2, CheckCircle2, XCircle, Ban, AlertCircle, Clock } from "lucide-
 
 // 状态格式化
 export function fmtStatus(s: string) {
-    if (s === "succeeded") return { text: "成功", variant: "default" as const, icon: CheckCircle2 };
-    if (s === "failed") return { text: "失败", variant: "destructive" as const, icon: XCircle };
-    if (s === "running") return { text: "运行中", variant: "secondary" as const, icon: Loader2 };
-    if (s === "canceled") return { text: "已取消", variant: "destructive" as const, icon: Ban };
-    if (s === "needs_review") return { text: "需复核", variant: "secondary" as const, icon: AlertCircle };
-    if (s === "idle") return { text: "空闲", variant: "outline" as const, icon: Clock };
-    if (s === "pending") return { text: "排队中", variant: "outline" as const, icon: Clock };
-    return { text: s, variant: "outline" as const, icon: AlertCircle };
+    if (s === "succeeded") return { text: "成功", variant: "default" as const, icon: CheckCircle2, color: "text-green-500" };
+    if (s === "failed") return { text: "失败", variant: "destructive" as const, icon: XCircle, color: "text-red-500" };
+    if (s === "running") return { text: "运行中", variant: "secondary" as const, icon: Loader2, color: "text-blue-500 animate-spin" };
+    if (s === "canceled") return { text: "已取消", variant: "destructive" as const, icon: Ban, color: "text-gray-500" };
+    if (s === "needs_review") return { text: "需复核", variant: "secondary" as const, icon: AlertCircle, color: "text-amber-500" };
+    if (s === "idle") return { text: "空闲", variant: "outline" as const, icon: Clock, color: "text-muted-foreground" };
+    if (s === "pending") return { text: "排队中", variant: "outline" as const, icon: Clock, color: "text-muted-foreground" };
+    return { text: s, variant: "outline" as const, icon: AlertCircle, color: "text-muted-foreground" };
 }
 
 // API 请求封装
@@ -68,4 +68,24 @@ export function suggestCategoryId(name: string): string {
     const slug = slugifyId(n);
     if (slug) return slug;
     return `cat_${Date.now()}`;
+}
+
+// 判断交易行是否为「待复核」状态
+export function isPendingRow(
+    r: Record<string, string>,
+    edits?: Record<string, Partial<Record<string, string | boolean>>>,
+): boolean {
+    const txnId = String(r.txn_id ?? "");
+    const suggestedUncertain = parseBoolish(r.suggested_uncertain);
+
+    const finalCatOverride = edits?.[txnId]?.final_category_id;
+    const finalCat = String(finalCatOverride ?? r.final_category_id ?? "").trim();
+
+    const finalIgnoredOverride = edits?.[txnId]?.final_ignored;
+    const finalIgnoredRaw = String(finalIgnoredOverride ?? r.final_ignored ?? "").trim();
+    const ignored = finalIgnoredRaw !== ""
+        ? parseBoolish(finalIgnoredRaw)
+        : parseBoolish(r.suggested_ignored);
+
+    return suggestedUncertain && !finalCat && !ignored;
 }

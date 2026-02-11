@@ -1,6 +1,6 @@
 import React, { createContext, useContext, ReactNode, useState, useMemo } from "react";
 import { ClassifierConfig, CsvPreview } from "@/types";
-import { parseBoolish, type RuleMatchMode, type RuleMatchField, type RuleAction } from "@/utils/helpers";
+import { parseBoolish, isPendingRow, type RuleMatchMode, type RuleMatchField, type RuleAction } from "@/utils/helpers";
 
 // ========== 类型定义 ==========
 
@@ -125,27 +125,8 @@ export function useFilteredReviewRows(
     return useMemo(() => {
         const q = reviewQuery.trim().toLowerCase();
 
-        const getOverride = (txnId: string, key: string): string | boolean | undefined =>
-            reviewEdits[txnId]?.[key];
-
-        const isPendingRow = (r: Record<string, string>) => {
-            const txnId = String(r.txn_id ?? "");
-            const suggestedUncertain = parseBoolish(r.suggested_uncertain);
-
-            const finalCatOverride = getOverride(txnId, "final_category_id");
-            const finalCat = String(finalCatOverride ?? r.final_category_id ?? "").trim();
-
-            const finalIgnoredOverride = getOverride(txnId, "final_ignored");
-            const finalIgnoredRaw = String(finalIgnoredOverride ?? r.final_ignored ?? "").trim();
-            const ignored = finalIgnoredRaw !== ""
-                ? parseBoolish(finalIgnoredRaw)
-                : parseBoolish(r.suggested_ignored);
-
-            return suggestedUncertain && !finalCat && !ignored;
-        };
-
         const withMeta = reviewRows.map((r, idx) => {
-            const pending = isPendingRow(r);
+            const pending = isPendingRow(r, reviewEdits);
             return { ...r, __pending: String(pending), __row_idx: String(idx) } as Record<string, string> & { __pending: string; __row_idx: string };
         });
 
@@ -166,26 +147,7 @@ export function useReviewPendingCount(
     reviewEdits: Record<string, Partial<Record<string, string | boolean>>>
 ): number {
     return useMemo(() => {
-        const getOverride = (txnId: string, key: string): string | boolean | undefined =>
-            reviewEdits[txnId]?.[key];
-
-        const isPendingRow = (r: Record<string, string>) => {
-            const txnId = String(r.txn_id ?? "");
-            const suggestedUncertain = parseBoolish(r.suggested_uncertain);
-
-            const finalCatOverride = getOverride(txnId, "final_category_id");
-            const finalCat = String(finalCatOverride ?? r.final_category_id ?? "").trim();
-
-            const finalIgnoredOverride = getOverride(txnId, "final_ignored");
-            const finalIgnoredRaw = String(finalIgnoredOverride ?? r.final_ignored ?? "").trim();
-            const ignored = finalIgnoredRaw !== ""
-                ? parseBoolish(finalIgnoredRaw)
-                : parseBoolish(r.suggested_ignored);
-
-            return suggestedUncertain && !finalCat && !ignored;
-        };
-
-        return reviewRows.filter(isPendingRow).length;
+        return reviewRows.filter((r) => isPendingRow(r, reviewEdits)).length;
     }, [reviewRows, reviewEdits]);
 }
 

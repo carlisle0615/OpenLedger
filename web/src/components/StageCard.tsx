@@ -7,7 +7,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { FileItem, Stage, StageIO } from "@/types";
-import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Clock, FileText, Loader2, Play, Terminal, XCircle } from "lucide-react";
+import { fmtStatus, api } from "@/utils/helpers";
+import { AlertCircle, ChevronDown, ChevronRight, FileText, Loader2, Play, Terminal } from "lucide-react";
 
 interface StageCardProps {
     stage: Stage;
@@ -18,21 +19,7 @@ interface StageCardProps {
     onSelectFile?: (file: FileItem) => void;
 }
 
-function fmtStatus(s: string) {
-    if (s === "succeeded") return { text: "成功", variant: "default" as const, icon: CheckCircle2, color: "text-green-500" };
-    if (s === "failed") return { text: "失败", variant: "destructive" as const, icon: XCircle, color: "text-red-500" };
-    if (s === "running") return { text: "运行中", variant: "secondary" as const, icon: Loader2, color: "text-blue-500 animate-spin" };
-    if (s === "needs_review") return { text: "需复核", variant: "secondary" as const, icon: AlertCircle, color: "text-amber-500" };
-    if (s === "canceled") return { text: "已取消", variant: "destructive" as const, icon: XCircle, color: "text-gray-500" };
-    if (s === "pending") return { text: "排队中", variant: "outline" as const, icon: Clock, color: "text-muted-foreground" };
-    return { text: s, variant: "outline" as const, icon: AlertCircle, color: "text-muted-foreground" };
-}
 
-async function api<T>(baseUrl: string, path: string): Promise<T> {
-    const res = await fetch(`${baseUrl}${path}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as T;
-}
 
 export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageCardProps) {
     const [io, setIo] = useState<StageIO | null>(null);

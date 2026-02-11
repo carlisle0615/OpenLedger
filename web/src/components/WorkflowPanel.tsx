@@ -21,14 +21,15 @@ interface WorkflowPanelProps {
   cancelRun: () => Promise<void>;
   baseUrl: string;
   selectFile: (file: FileItem) => void;
+  className?: string;
 }
 
 export function WorkflowPanel({
   state, runId, busy, selectedStageId, setSelectedStageId,
-  startWorkflow, resetClassify, cancelRun, baseUrl, selectFile
+  startWorkflow, resetClassify, cancelRun, baseUrl, selectFile, className
 }: WorkflowPanelProps) {
   return (
-    <div className="lg:col-span-4 space-y-4">
+    <div className={cn("space-y-4", className)}>
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-lg font-semibold">流程</h3>
         <div className="flex gap-2">
