@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { ClassifierConfig, CsvPreview, RunState } from "@/types";
 import {
     api, parseBoolish, isPendingRow, escapeRegExp, suggestCategoryId,
@@ -193,23 +193,28 @@ export function useReviewActions(deps: ReviewActionsDeps) {
     const requestCloseReview = useCallback(async () => {
         const hasEdits = Object.keys(reviewEdits).length > 0;
         if (hasEdits) {
-            const ok = await confirm({
-                title: "确认关闭人工复核？",
-                description: "当前有未保存的修改，关闭后将丢失。",
-                confirmText: "仍然关闭",
-                cancelText: "继续编辑",
+            const save = await confirm({
+                title: "关闭前保存修改？",
+                description: "检测到未保存的复核修改，请选择保存或放弃。",
+                confirmText: "保存并关闭",
+                cancelText: "放弃修改",
                 tone: "danger",
             });
-            if (!ok) return false;
+            if (save) {
+                const ok = await saveReviewEdits();
+                if (!ok) return false;
+            } else {
+                setReviewEdits({});
+            }
         }
         if (window.location.hash === "#review") {
             window.history.replaceState(null, "", window.location.pathname + window.location.search);
         }
         setReviewOpen(false);
         return true;
-    }, [confirm, reviewEdits]);
+    }, [confirm, reviewEdits, saveReviewEdits, setReviewEdits]);
 
-    async function loadReview() {
+    const loadReview = useCallback(async () => {
         if (!runId) return;
         const path = "output/classify/review.csv";
         setBusy(true);
@@ -236,7 +241,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         } finally {
             setBusy(false);
         }
-    }
+    }, [baseUrl, runId, setBusy, setError, setReviewRows, setReviewEdits, setReviewSelectedTxnIds]);
 
     async function openReview() {
         setReviewOpen(true);
@@ -330,10 +335,10 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         }
     }
 
-    async function saveReviewEdits() {
-        if (!runId) return;
+    async function saveReviewEdits(): Promise<boolean> {
+        if (!runId) return false;
         const updates = Object.entries(reviewEdits).map(([txn_id, patch]) => ({ txn_id, ...patch }));
-        if (updates.length === 0) return;
+        if (updates.length === 0) return true;
         setBusy(true);
         setError("");
         try {
@@ -343,8 +348,10 @@ export function useReviewActions(deps: ReviewActionsDeps) {
                 body: JSON.stringify({ updates }),
             });
             await loadReview();
+            return true;
         } catch (e) {
             setError(String(e));
+            return false;
         } finally {
             setBusy(false);
         }
@@ -547,6 +554,8 @@ export function useReviewActions(deps: ReviewActionsDeps) {
 
     // ---- 副作用 ----
 
+    const autoLoadRef = useRef<string>("");
+
     // hash 同步
     useEffect(() => {
         const sync = () => {
@@ -566,6 +575,18 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         window.addEventListener("hashchange", sync);
         return () => window.removeEventListener("hashchange", sync);
     }, [reviewOpen, requestCloseReview]);
+
+    // 自动加载
+    useEffect(() => {
+        if (!reviewOpen) {
+            autoLoadRef.current = "";
+            return;
+        }
+        if (!runId) return;
+        if (autoLoadRef.current === runId) return;
+        autoLoadRef.current = runId;
+        void loadReview();
+    }, [reviewOpen, runId, loadReview]);
 
     // Escape 关闭
     useEffect(() => {

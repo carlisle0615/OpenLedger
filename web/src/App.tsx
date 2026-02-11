@@ -76,122 +76,132 @@ export default function App() {
   const showSettingsCard = Boolean(state?.stages?.length);
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-4 font-sans antialiased">
-      <div className="w-full px-4 space-y-4">
+    <>
+      <div className="h-screen overflow-hidden bg-background text-foreground p-4 font-sans antialiased">
+        <div className="w-full px-4 h-full flex flex-col gap-4">
           <HeaderBar
-          baseUrl={baseUrl} setBaseUrl={appState.setBaseUrl}
-          backendStatus={backendStatus} backendError={backendError}
-          runs={runs} runId={runId} setRunId={appState.setRunId}
-          runsMeta={runsMeta} newRunName={newRunName} setNewRunName={setNewRunName}
-          busy={busy} runStatus={runStatus} runName={runName}
-          refreshRuns={refreshRuns} onCreateRun={onCreateRun}
-          activeView={activeView} setActiveView={setActiveView}
-        />
-
-        {error && <div className="text-sm text-destructive flex items-center gap-2 p-2 border border-destructive/20 bg-destructive/10 rounded-md"><AlertCircle className="h-4 w-4" /> {error}</div>}
-
-        {activeView === "profiles" ? (
-          <ProfilesPage
-            baseUrl={baseUrl}
-            runId={runId}
-            currentProfileId={state?.options?.profile_id}
-            busy={busy}
-            saveOptions={saveOptions}
-            runState={state}
+            baseUrl={baseUrl} setBaseUrl={appState.setBaseUrl}
+            backendStatus={backendStatus} backendError={backendError}
+            runs={runs} runId={runId} setRunId={appState.setRunId}
+            runsMeta={runsMeta} newRunName={newRunName} setNewRunName={setNewRunName}
+            busy={busy} runStatus={runStatus} runName={runName}
+            refreshRuns={refreshRuns} onCreateRun={onCreateRun}
+            activeView={activeView} setActiveView={setActiveView}
           />
-        ) : (
-          <>
-            {runId && !state?.inputs?.length ? (
-              <Card>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-base">下一步</CardTitle>
-                </CardHeader>
-                <CardContent className="py-3 text-sm text-muted-foreground">
-                  请上传 PDF/CSV/XLSX 文件以开始处理。
-                </CardContent>
-              </Card>
-            ) : null}
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              <div className="lg:col-span-4 flex flex-col gap-4">
-                {showReviewPanel ? (
-                  <ReviewPanel
-                    statusNeedsReview={state?.status === "needs_review"}
-                    reviewPendingCount={reviewPendingCount}
-                    reviewEditsCount={Object.keys(reviewEdits).length}
-                    reviewRowsCount={reviewRows.length}
-                    runId={runId}
-                    busy={busy}
-                    loadReview={loadReview}
-                    openReview={openReview}
-                  />
-                ) : null}
+          {error && (
+            <div className="text-sm text-destructive flex items-center gap-2 p-2 border border-destructive/20 bg-destructive/10 rounded-md">
+              <AlertCircle className="h-4 w-4" /> {error}
+            </div>
+          )}
 
-                <WorkflowPanel
-                  state={state}
-                  runId={runId}
-                  busy={busy}
-                  selectedStageId={selectedStageId}
-                  setSelectedStageId={setSelectedStageId}
-                  startWorkflow={startWorkflow}
-                  resetClassify={resetClassify}
-                  cancelRun={cancelRun}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {activeView === "profiles" ? (
+              <div className="h-full overflow-auto">
+                <ProfilesPage
                   baseUrl={baseUrl}
-                  selectFile={selectFile}
+                  runId={runId}
+                  currentProfileId={state?.options?.profile_id}
+                  busy={busy}
+                  saveOptions={saveOptions}
+                  runState={state}
                 />
-
-                {showConfigPanel ? (
-                  <ConfigPanel
-                    configText={configText} setConfigText={setConfigText}
-                    cfgSaveToRun={cfgSaveToRun} setCfgSaveToRun={setCfgSaveToRun}
-                    cfgSaveToGlobal={cfgSaveToGlobal} setCfgSaveToGlobal={setCfgSaveToGlobal}
-                    saveConfig={saveConfig}
-                  />
+              </div>
+            ) : (
+              <div className="flex flex-col min-h-0 h-full gap-4">
+                {runId && !state?.inputs?.length ? (
+                  <Card>
+                    <CardHeader className="py-3">
+                      <CardTitle className="text-base">下一步</CardTitle>
+                    </CardHeader>
+                    <CardContent className="py-3 text-sm text-muted-foreground">
+                      请上传 PDF/CSV/XLSX 文件以开始处理。
+                    </CardContent>
+                  </Card>
                 ) : null}
 
-                {showSettingsCard ? (
-                  <div className="mt-auto">
-                    <SettingsCard
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+                  <div className="lg:col-span-4 flex flex-col gap-4 min-h-0 overflow-auto pr-1">
+                    {showReviewPanel ? (
+                      <ReviewPanel
+                        statusNeedsReview={state?.status === "needs_review"}
+                        reviewPendingCount={reviewPendingCount}
+                        reviewEditsCount={Object.keys(reviewEdits).length}
+                        reviewRowsCount={reviewRows.length}
+                        runId={runId}
+                        busy={busy}
+                        loadReview={loadReview}
+                        openReview={openReview}
+                      />
+                    ) : null}
+
+                    <WorkflowPanel
                       state={state}
-                      pdfModes={pdfModes}
+                      runId={runId}
                       busy={busy}
-                      saveOptions={saveOptions}
+                      selectedStageId={selectedStageId}
+                      setSelectedStageId={setSelectedStageId}
+                      startWorkflow={startWorkflow}
+                      resetClassify={resetClassify}
+                      cancelRun={cancelRun}
+                      baseUrl={baseUrl}
+                      selectFile={selectFile}
+                    />
+
+                    {showConfigPanel ? (
+                      <ConfigPanel
+                        configText={configText} setConfigText={setConfigText}
+                        cfgSaveToRun={cfgSaveToRun} setCfgSaveToRun={setCfgSaveToRun}
+                        cfgSaveToGlobal={cfgSaveToGlobal} setCfgSaveToGlobal={setCfgSaveToGlobal}
+                        saveConfig={saveConfig}
+                      />
+                    ) : null}
+
+                    {showSettingsCard ? (
+                      <div className="mt-auto">
+                        <SettingsCard
+                          state={state}
+                          pdfModes={pdfModes}
+                          busy={busy}
+                          saveOptions={saveOptions}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="lg:col-span-8 flex flex-col min-h-0 gap-6 overflow-hidden">
+                    {showUploadCard ? (
+                      <UploadCard
+                        state={state}
+                        runId={runId}
+                        busy={busy}
+                        onUpload={onUpload}
+                      />
+                    ) : null}
+
+                    <PreviewArea
+                      selectedFile={selectedFile}
+                      runName={runName}
+                      downloadHref={downloadHref}
+                      previewError={previewError}
+                      csvPreview={csvPreview}
+                      pdfPreview={pdfPreview}
+                      textPreview={textPreview}
+                      loadCsv={loadCsv}
+                      pdfPageHref={pdfPageHref}
                     />
                   </div>
-                ) : null}
+                </div>
               </div>
-
-              <div className="lg:col-span-8 space-y-6">
-                {showUploadCard ? (
-                  <UploadCard
-                    state={state}
-                    runId={runId}
-                    busy={busy}
-                    onUpload={onUpload}
-                  />
-                ) : null}
-
-                <PreviewArea
-                  selectedFile={selectedFile}
-                  runName={runName}
-                  downloadHref={downloadHref}
-                  previewError={previewError}
-                  csvPreview={csvPreview}
-                  pdfPreview={pdfPreview}
-                  textPreview={textPreview}
-                  loadCsv={loadCsv}
-                  pdfPageHref={pdfPageHref}
-                />
-              </div>
-            </div>
-          </>
-        )}
+            )}
+          </div>
+        </div>
       </div>
 
       <ReviewContext.Provider value={reviewContextValue}>
         <ReviewModal />
       </ReviewContext.Provider>
       {dialog}
-    </div>
+    </>
   );
 }

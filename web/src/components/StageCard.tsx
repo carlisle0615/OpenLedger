@@ -19,6 +19,82 @@ interface StageCardProps {
     onSelectFile?: (file: FileItem) => void;
 }
 
+type FileDisplay = {
+    label: string;
+    view: string;
+};
+
+const FILE_DISPLAY: Record<string, FileDisplay> = {
+    "wechat.normalized.csv": { label: "微信明细标准化", view: "点击预览表格，核对字段映射" },
+    "alipay.normalized.csv": { label: "支付宝明细标准化", view: "点击预览表格，核对字段映射" },
+    "credit_card.enriched.csv": { label: "信用卡匹配回填(已匹配)", view: "点击预览表格，查看回填结果" },
+    "credit_card.unmatched.csv": { label: "信用卡未匹配条目", view: "点击预览表格，查看未匹配原因" },
+    "credit_card.match.xlsx": { label: "信用卡匹配对照表(Excel)", view: "点击预览，复杂筛选建议下载" },
+    "credit_card.match_debug.csv": { label: "信用卡匹配调试明细", view: "点击预览或下载分析候选/置信度" },
+    "bank.enriched.csv": { label: "借记卡匹配回填(已匹配)", view: "点击预览表格，查看回填结果" },
+    "bank.unmatched.csv": { label: "借记卡未匹配条目", view: "点击预览表格，查看未匹配原因" },
+    "bank.match.xlsx": { label: "借记卡匹配对照表(Excel)", view: "点击预览，复杂筛选建议下载" },
+    "bank.match_debug.csv": { label: "借记卡匹配调试明细", view: "点击预览或下载分析候选/置信度" },
+    "unified.transactions.csv": { label: "统一交易表(当前账期)", view: "点击预览表格或下载分析" },
+    "unified.transactions.xlsx": { label: "统一交易表(当前账期 Excel)", view: "点击预览，复杂筛选建议下载" },
+    "unified.transactions.all.csv": { label: "统一交易表(全量)", view: "点击预览表格或下载分析" },
+    "unified.transactions.all.xlsx": { label: "统一交易表(全量 Excel)", view: "点击预览，复杂筛选建议下载" },
+    "unified.with_id.csv": { label: "分类输入(含交易ID)", view: "点击预览表格，供分类/复核使用" },
+    "review.csv": { label: "复核任务表", view: "点击预览表格，建议在复核面板处理" },
+    "unified.transactions.categorized.csv": { label: "分类完成交易表", view: "点击预览表格或下载分析" },
+    "unified.transactions.categorized.xlsx": { label: "分类完成交易表(Excel)", view: "点击预览，复杂筛选建议下载" },
+    "category.summary.csv": { label: "分类汇总", view: "点击预览表格，查看类别汇总" },
+    "pending_review.csv": { label: "待复核清单", view: "点击预览表格，建议在复核面板处理" },
+    "classifier.json": { label: "分类规则配置", view: "点击预览文本或下载" },
+};
+
+function defaultViewHint(name: string) {
+    const lower = name.toLowerCase();
+    if (lower.endsWith(".pdf")) return "点击预览 PDF（支持翻页/缩略图）";
+    if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) return "点击预览表格，复杂筛选建议下载";
+    if (lower.endsWith(".csv")) return "点击预览表格，复杂筛选建议下载";
+    if (lower.endsWith(".json") || lower.endsWith(".txt") || lower.endsWith(".log")) return "点击预览文本或下载";
+    return "点击下载查看";
+}
+
+function fileDisplay(name: string): FileDisplay {
+    const exact = FILE_DISPLAY[name];
+    if (exact) return exact;
+    if (name.endsWith(".transactions.csv")) {
+        if (name.includes("信用卡")) {
+            return { label: "信用卡账单解析结果", view: "点击预览表格，核对账单解析" };
+        }
+        if (name.includes("交易流水") || name.includes("statement")) {
+            return { label: "借记卡流水解析结果", view: "点击预览表格，核对流水解析" };
+        }
+        return { label: "账单/流水解析结果", view: "点击预览表格，核对解析结果" };
+    }
+    return { label: name, view: defaultViewHint(name) };
+}
+
+function renderFileRow(f: FileItem, onSelect?: (file: FileItem) => void) {
+    const display = fileDisplay(f.name);
+    return (
+        <div
+            key={f.path}
+            className="group relative text-xs flex items-center gap-2 p-1.5 rounded-md hover:bg-accent cursor-pointer transition-colors border border-dashed border-transparent hover:border-border"
+            onClick={() => onSelect?.(f)}
+            title={`${display.label} | ${display.view}`}
+        >
+            <FileText className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary" />
+            <span className="truncate flex-1">{display.label}</span>
+            <span className="text-[10px] text-muted-foreground/50 font-mono">
+                {f.exists ? Math.round((f.size || 0) / 1024) + "KB" : "-"}
+            </span>
+            <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 hidden w-[280px] rounded-md border bg-popover p-2 text-[10px] text-popover-foreground shadow-md group-hover:block">
+                <div className="font-medium">{display.label}</div>
+                <div className="text-muted-foreground">原文件名：{f.name}</div>
+                <div className="text-muted-foreground">查看方式：{display.view}</div>
+            </div>
+        </div>
+    );
+}
+
 
 
 export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageCardProps) {
@@ -135,17 +211,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
                         <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">输入</h4>
                         <div className="space-y-1">
                             {io?.inputs?.length ? (
-                                io.inputs.map((f) => (
-                                    <div
-                                        key={f.path}
-                                        className="group text-xs flex items-center gap-2 p-1.5 rounded-md hover:bg-accent cursor-pointer transition-colors border border-dashed border-transparent hover:border-border"
-                                        onClick={() => onSelectFile?.(f)}
-                                    >
-                                        <FileText className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary" />
-                                        <span className="truncate flex-1" title={f.name}>{f.name}</span>
-                                        <span className="text-[10px] text-muted-foreground/50 font-mono">{f.exists ? Math.round((f.size || 0) / 1024) + 'KB' : '-'}</span>
-                                    </div>
-                                ))
+                                io.inputs.map((f) => renderFileRow(f, onSelectFile))
                             ) : (
                                 <div className="text-[10px] text-muted-foreground italic p-1">暂无输入</div>
                             )}
@@ -156,17 +222,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
                         <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">输出</h4>
                         <div className="space-y-1">
                             {io?.outputs?.length ? (
-                                io.outputs.map((f) => (
-                                    <div
-                                        key={f.path}
-                                        className="group text-xs flex items-center gap-2 p-1.5 rounded-md hover:bg-accent cursor-pointer transition-colors border border-dashed border-transparent hover:border-border"
-                                        onClick={() => onSelectFile?.(f)}
-                                    >
-                                        <FileText className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary" />
-                                        <span className="truncate flex-1" title={f.name}>{f.name}</span>
-                                        <span className="text-[10px] text-muted-foreground/50 font-mono">{f.exists ? Math.round((f.size || 0) / 1024) + 'KB' : '-'}</span>
-                                    </div>
-                                ))
+                                io.outputs.map((f) => renderFileRow(f, onSelectFile))
                             ) : (
                                 <div className="text-[10px] text-muted-foreground italic p-1">暂无输出</div>
                             )}

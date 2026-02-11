@@ -52,7 +52,7 @@ export function PreviewArea({ selectedFile, runName, downloadHref, pdfPageHref, 
     return Array.from({ length: max }, (_, i) => i + 1);
   }, [pageCount]);
   return (
-    <Card className="min-h-[600px] flex flex-col h-[calc(100vh-250px)]">
+    <Card className="min-h-[600px] flex flex-col flex-1 min-h-0">
       <CardHeader className="py-3 border-b bg-muted/20">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -79,11 +79,11 @@ export function PreviewArea({ selectedFile, runName, downloadHref, pdfPageHref, 
             <p className="text-sm">从任意阶段选择文件进行预览</p>
           </div>
         ) : (
-          <div className="absolute inset-0 overflow-auto">
+          <div className="absolute inset-0 flex flex-col min-h-0">
             {previewError && <div className="p-4 text-destructive text-sm">{previewError}</div>}
 
             {isPdf && pdfPreview && (
-              <div className="p-4 space-y-3">
+              <div className="flex-1 overflow-auto p-4 space-y-3">
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" disabled={pdfPage <= 1} onClick={() => setPdfPage((p) => Math.max(1, p - 1))}>上一页</Button>
                   <Button variant="outline" size="sm" disabled={pageCount === 0 || pdfPage >= pageCount} onClick={() => setPdfPage((p) => Math.min(pageCount, p + 1))}>下一页</Button>
@@ -126,7 +126,7 @@ export function PreviewArea({ selectedFile, runName, downloadHref, pdfPageHref, 
             )}
 
             {csvPreview && (
-              <div className="p-4">
+              <div className="flex-1 min-h-0 flex flex-col p-4">
                 <div className="flex gap-2 mb-2">
                   <Button variant="outline" size="sm" disabled={csvPreview.prev_offset == null} onClick={() => loadCsv(selectedFile!.path, csvPreview.prev_offset ?? 0)}>上一页</Button>
                   <Button variant="outline" size="sm" disabled={!csvPreview.has_more} onClick={() => loadCsv(selectedFile!.path, csvPreview.next_offset ?? 0)}>下一页</Button>
@@ -134,8 +134,8 @@ export function PreviewArea({ selectedFile, runName, downloadHref, pdfPageHref, 
                     {csvPreview.offset} - {csvPreview.offset + csvPreview.rows.length}
                   </span>
                 </div>
-                <div className="border rounded-md overflow-hidden">
-                  <table className="w-full caption-bottom text-sm">
+                <div className="border rounded-md overflow-auto flex-1 min-h-0">
+                  <table className="w-max min-w-full caption-bottom text-sm">
                     <TableHeader>
                       <TableRow>
                         {csvPreview.columns.map((k) => <TableHead key={k} className="whitespace-nowrap h-8 text-xs">{k}</TableHead>)}
@@ -154,7 +154,7 @@ export function PreviewArea({ selectedFile, runName, downloadHref, pdfPageHref, 
             )}
 
             {!csvPreview && !pdfPreview && textPreview && (
-              <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{textPreview}</pre>
+              <pre className="flex-1 overflow-auto p-4 text-xs font-mono whitespace-pre-wrap">{textPreview}</pre>
             )}
           </div>
         )}

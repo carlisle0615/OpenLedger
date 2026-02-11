@@ -79,7 +79,7 @@ export interface ReviewActions {
 
     // 业务方法
     loadReview: () => Promise<void>;
-    saveReviewEdits: () => Promise<void>;
+    saveReviewEdits: () => Promise<boolean>;
     applyBulkLocal: () => Promise<void>;
     applyQuickRule: () => Promise<void>;
     addCategory: () => Promise<void>;
