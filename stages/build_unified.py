@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import calendar
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -45,6 +46,7 @@ UNIFIED_COLUMNS = [
     "primary_source",
     "sources",
     "match_status",
+    "match_group_id",
     "remark",
 ]
 
@@ -207,6 +209,38 @@ def _join_refs(refs: list[str], limit: int = 6) -> str:
     return " | ".join(refs[:limit]) + f" 等{len(refs)}条"
 
 
+def _hash_group_id(seed: str) -> str:
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
+    return f"mg_{digest}"
+
+
+def _match_group_id_from_detail_ids(detail_ids: list[str]) -> str:
+    ids = sorted(_dedup(detail_ids))
+    if not ids:
+        return ""
+    return _hash_group_id("|".join(ids))
+
+
+def _match_group_id_from_bill(seed: str) -> str:
+    seed = _clean_str(seed)
+    if not seed:
+        return ""
+    return _hash_group_id(f"bill|{seed}")
+
+
+def _detail_group_id(row: pd.Series, detail_to_group_map: dict[str, str]) -> str:
+    if not detail_to_group_map:
+        return ""
+    ids = _dedup([_clean_str(row.get("trade_no")), _clean_str(row.get("merchant_no"))])
+    if not ids:
+        return ""
+    groups = _dedup([detail_to_group_map.get(k, "") for k in ids])
+    groups = [g for g in groups if g]
+    if not groups:
+        return ""
+    return sorted(groups)[0]
+
+
 def _detail_match_remark(row: pd.Series, detail_to_bill_map: dict[str, list[str]]) -> str:
     if not detail_to_bill_map:
         return ""
@@ -289,6 +323,44 @@ def _build_detail_to_bill_map(
     return {k: _dedup(v) for k, v in mapping.items()}
 
 
+def _build_detail_to_group_map(
+    cc_enriched: pd.DataFrame, bank_enriched: pd.DataFrame
+) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+
+    def ingest(df: pd.DataFrame, bill_fn) -> None:
+        if df.empty:
+            return
+        df = _ensure_cols(
+            df.copy(),
+            [
+                "match_status",
+                "detail_trade_no",
+                "detail_merchant_no",
+            ],
+        )
+        for _, row in df.iterrows():
+            if _clean_str(row.get("match_status")) != "matched":
+                continue
+            ids = _extract_detail_ids(row)
+            if not ids:
+                continue
+            group_id = _match_group_id_from_detail_ids(ids)
+            if not group_id:
+                group_id = _match_group_id_from_bill(bill_fn(row))
+            if not group_id:
+                continue
+            for key in ids:
+                if key in mapping:
+                    continue
+                mapping[key] = group_id
+
+    ingest(cc_enriched, _bill_descriptor_cc)
+    ingest(bank_enriched, _bill_descriptor_bank)
+
+    return mapping
+
+
 def _is_refund_like(direction: str, item: str, status: str, category: str) -> bool:
     if "退款" in (item or "") or "退款" in (status or "") or "退款" in (category or ""):
         return True
@@ -316,7 +388,11 @@ def _empty_unified_df() -> pd.DataFrame:
     return pd.DataFrame(columns=UNIFIED_COLUMNS)
 
 
-def _wechat_wallet_rows(wechat_norm: pd.DataFrame, detail_to_bill_map: dict[str, list[str]]) -> pd.DataFrame:
+def _wechat_wallet_rows(
+    wechat_norm: pd.DataFrame,
+    detail_to_bill_map: dict[str, list[str]],
+    detail_to_group_map: dict[str, str],
+) -> pd.DataFrame:
     df = wechat_norm.copy()
     df = _ensure_cols(
         df,
@@ -357,6 +433,10 @@ def _wechat_wallet_rows(wechat_norm: pd.DataFrame, detail_to_bill_map: dict[str,
         lambda r: _detail_match_remark(r, detail_to_bill_map),
         axis=1,
     )
+    wallet["match_group_id"] = wallet.apply(
+        lambda r: _detail_group_id(r, detail_to_group_map),
+        axis=1,
+    )
     out = pd.DataFrame(
         {
             "trade_time": wallet["trans_time"].fillna(""),
@@ -377,13 +457,18 @@ def _wechat_wallet_rows(wechat_norm: pd.DataFrame, detail_to_bill_map: dict[str,
             "primary_source": wallet["primary_source"],
             "sources": wallet["sources"],
             "match_status": wallet["match_status"],
+            "match_group_id": wallet["match_group_id"],
             "remark": wallet["remark_unified"],
         }
     )
     return out
 
 
-def _alipay_wallet_rows(alipay_norm: pd.DataFrame, detail_to_bill_map: dict[str, list[str]]) -> pd.DataFrame:
+def _alipay_wallet_rows(
+    alipay_norm: pd.DataFrame,
+    detail_to_bill_map: dict[str, list[str]],
+    detail_to_group_map: dict[str, str],
+) -> pd.DataFrame:
     df = alipay_norm.copy()
     df = _ensure_cols(
         df,
@@ -425,6 +510,10 @@ def _alipay_wallet_rows(alipay_norm: pd.DataFrame, detail_to_bill_map: dict[str,
         lambda r: _detail_match_remark(r, detail_to_bill_map),
         axis=1,
     )
+    wallet["match_group_id"] = wallet.apply(
+        lambda r: _detail_group_id(r, detail_to_group_map),
+        axis=1,
+    )
     out = pd.DataFrame(
         {
             "trade_time": wallet["trans_time"].fillna(""),
@@ -445,6 +534,7 @@ def _alipay_wallet_rows(alipay_norm: pd.DataFrame, detail_to_bill_map: dict[str,
             "primary_source": wallet["primary_source"],
             "sources": wallet["sources"],
             "match_status": wallet["match_status"],
+            "match_group_id": wallet["match_group_id"],
             "remark": wallet["remark_unified"],
         }
     )
@@ -544,6 +634,16 @@ def _credit_card_rows(
 
     cc["remark_unified"] = cc.apply(cc_remark, axis=1)
 
+    def cc_group_id(row: pd.Series) -> str:
+        if _clean_str(row.get("match_status")) != "matched":
+            return ""
+        ids = _extract_detail_ids(row)
+        if ids:
+            return _match_group_id_from_detail_ids(ids)
+        return _match_group_id_from_bill(_bill_descriptor_cc(row))
+
+    cc["match_group_id"] = cc.apply(cc_group_id, axis=1)
+
     out = pd.DataFrame(
         {
             "trade_time": cc["detail_trans_time"].fillna(""),
@@ -561,6 +661,7 @@ def _credit_card_rows(
             "primary_source": cc["primary_source"],
             "sources": cc["sources"],
             "match_status": cc.get("match_status", "").fillna(""),
+            "match_group_id": cc["match_group_id"],
             "remark": cc["remark_unified"],
         }
     )
@@ -649,6 +750,16 @@ def _bank_rows(
 
     bank["remark_unified"] = bank.apply(bank_remark, axis=1)
 
+    def bank_group_id(row: pd.Series) -> str:
+        if _clean_str(row.get("match_status")) != "matched":
+            return ""
+        ids = _extract_detail_ids(row)
+        if ids:
+            return _match_group_id_from_detail_ids(ids)
+        return _match_group_id_from_bill(_bill_descriptor_bank(row))
+
+    bank["match_group_id"] = bank.apply(bank_group_id, axis=1)
+
     out = pd.DataFrame(
         {
             "trade_time": bank["detail_trans_time"].fillna(""),
@@ -666,6 +777,7 @@ def _bank_rows(
             "primary_source": bank["primary_source"],
             "sources": bank["sources"],
             "match_status": bank.get("match_status", "").fillna(""),
+            "match_group_id": bank["match_group_id"],
             "remark": bank["remark_unified"],
         }
     )
@@ -707,13 +819,14 @@ def build_unified(
 
     detail_lookup = _build_detail_lookup(wechat_norm, alipay_norm)
     detail_to_bill = _build_detail_to_bill_map(cc_enriched, bank_enriched)
+    detail_to_group = _build_detail_to_group_map(cc_enriched, bank_enriched)
 
     cc_out = _credit_card_rows(cc_enriched, cc_unmatched, detail_lookup)
     bank_out = _bank_rows(bank_enriched, bank_unmatched, detail_lookup)
     wallet_out = pd.concat(
         [
-            _wechat_wallet_rows(wechat_norm, detail_to_bill),
-            _alipay_wallet_rows(alipay_norm, detail_to_bill),
+            _wechat_wallet_rows(wechat_norm, detail_to_bill, detail_to_group),
+            _alipay_wallet_rows(alipay_norm, detail_to_bill, detail_to_group),
         ],
         ignore_index=True,
     )
