@@ -460,7 +460,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                         ) : null}
                         {(periodStats.conflicts.length > 0 || periodStats.missing.length > 0) && (
                             <div className="text-[11px] text-muted-foreground flex items-start gap-2">
-                                <AlertCircle className="h-3.5 w-3.5 mt-0.5 text-amber-500" />
+                                <AlertCircle className="h-3.5 w-3.5 mt-0.5 text-[hsl(var(--warning))]" />
                                 <div className="space-y-1">
                                     {periodStats.conflicts.length > 0 && (
                                         <div>账期冲突：{periodStats.conflicts.join(", ")}</div>

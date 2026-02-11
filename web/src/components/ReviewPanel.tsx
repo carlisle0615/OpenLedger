@@ -21,10 +21,10 @@ export function ReviewPanel({
     runId, busy, loadReview, openReview,
 }: ReviewPanelProps) {
     return (
-        <Card className={cn(statusNeedsReview ? "border-amber-300/60 bg-amber-50/60" : "")}>
+        <Card className={cn(statusNeedsReview ? "border-[hsl(var(--warning))]/60 bg-[hsl(var(--warning))]/5" : "")}>
             <CardHeader className="py-2">
                 <CardTitle className="text-base flex items-center gap-2">
-                    <AlertCircle className={cn("h-4 w-4", statusNeedsReview ? "text-amber-500" : "text-muted-foreground")} />
+                    <AlertCircle className={cn("h-4 w-4", statusNeedsReview ? "text-[hsl(var(--warning))]" : "text-muted-foreground")} />
                     人工复核
                     {statusNeedsReview ? (
                         <Badge variant="secondary" className="text-[10px]">

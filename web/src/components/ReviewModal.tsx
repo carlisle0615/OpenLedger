@@ -361,7 +361,7 @@ export function ReviewModal() {
                           className={cn(
                             "h-9 cursor-pointer",
                             ignored && !active && "bg-muted/30",
-                            pending && "bg-amber-50/40",
+                            pending && "bg-[hsl(var(--warning))]/5",
                             active && "bg-accent"
                           )}
                           onClick={() => {
@@ -590,112 +590,112 @@ export function ReviewModal() {
                       </CardContent>
                     </Card>
 
-                      <Card>
-                        <CardHeader className="py-3">
-                          <CardTitle className="text-base">快速规则（试运行）</CardTitle>
-                          <CardDescription className="text-xs">
+                    <Card>
+                      <CardHeader className="py-3">
+                        <CardTitle className="text-base">快速规则（试运行）</CardTitle>
+                        <CardDescription className="text-xs">
                           配置规则后会批量更新当前账期匹配行，并可选写入 <span className="font-mono">regex_category_rules</span>/<span className="font-mono">ignore_rules</span>（后续任务自动生效）。
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent className="py-3 space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">操作</div>
-                              <Select value={ruleAction} onValueChange={(v: string) => setRuleAction(v as RuleAction)}>
-                                <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="categorize">分类</SelectItem>
-                                  <SelectItem value="ignore">不记账</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">字段</div>
-                              <Select value={ruleField} onValueChange={(v: string) => setRuleField(v as RuleMatchField)}>
-                                <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="merchant">商户</SelectItem>
-                                  <SelectItem value="item">商品</SelectItem>
-                                  <SelectItem value="remark">备注</SelectItem>
-                                  <SelectItem value="category">分类</SelectItem>
-                                  <SelectItem value="pay_method">支付方式</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">匹配方式</div>
-                              <Select value={ruleMode} onValueChange={(v: string) => setRuleMode(v as RuleMatchMode)}>
-                                <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="contains">包含</SelectItem>
-                                  <SelectItem value="regex">正则</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="col-span-2 space-y-1">
-                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">规则</div>
-                              <div className="flex gap-2">
-                                <Input
-                                  value={rulePattern}
-                                  onChange={(e) => setRulePattern(e.target.value)}
-                                  placeholder="例如：一家打面"
-                                  className="h-8 text-xs flex-1"
-                                />
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setRuleField("merchant");
-                                    setRuleMode("contains");
-                                    setRulePattern(String(selectedReviewRow.merchant ?? ""));
-                                  }}
-                                >
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="py-3 space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">操作</div>
+                            <Select value={ruleAction} onValueChange={(v: string) => setRuleAction(v as RuleAction)}>
+                              <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="categorize">分类</SelectItem>
+                                <SelectItem value="ignore">不记账</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">字段</div>
+                            <Select value={ruleField} onValueChange={(v: string) => setRuleField(v as RuleMatchField)}>
+                              <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="merchant">商户</SelectItem>
+                                <SelectItem value="item">商品</SelectItem>
+                                <SelectItem value="remark">备注</SelectItem>
+                                <SelectItem value="category">分类</SelectItem>
+                                <SelectItem value="pay_method">支付方式</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">匹配方式</div>
+                            <Select value={ruleMode} onValueChange={(v: string) => setRuleMode(v as RuleMatchMode)}>
+                              <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="contains">包含</SelectItem>
+                                <SelectItem value="regex">正则</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="col-span-2 space-y-1">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">规则</div>
+                            <div className="flex gap-2">
+                              <Input
+                                value={rulePattern}
+                                onChange={(e) => setRulePattern(e.target.value)}
+                                placeholder="例如：一家打面"
+                                className="h-8 text-xs flex-1"
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setRuleField("merchant");
+                                  setRuleMode("contains");
+                                  setRulePattern(String(selectedReviewRow.merchant ?? ""));
+                                }}
+                              >
                                 使用商户
-                                </Button>
-                              </div>
-                              {rulePreview.error ? (
-                                <div className="text-xs text-destructive">{rulePreview.error}</div>
-                              ) : null}
+                              </Button>
                             </div>
-                            {ruleAction === "categorize" ? (
-                              <>
-                                <div className="space-y-1">
-                                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">分类</div>
-                                  <Select value={ruleCategoryId} onValueChange={setRuleCategoryId}>
-                                    <SelectTrigger className="h-8 text-xs w-full">
-                                      <SelectValue placeholder="选择分类" />
-                                    </SelectTrigger>
-                                    <SelectContent>
+                            {rulePreview.error ? (
+                              <div className="text-xs text-destructive">{rulePreview.error}</div>
+                            ) : null}
+                          </div>
+                          {ruleAction === "categorize" ? (
+                            <>
+                              <div className="space-y-1">
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">分类</div>
+                                <Select value={ruleCategoryId} onValueChange={setRuleCategoryId}>
+                                  <SelectTrigger className="h-8 text-xs w-full">
+                                    <SelectValue placeholder="选择分类" />
+                                  </SelectTrigger>
+                                  <SelectContent>
                                     {config?.categories?.map((c) => (
                                       <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                                     ))}
                                   </SelectContent>
                                 </Select>
-                                </div>
-                                <div className="space-y-1">
-                                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">新增分类</div>
-                                  <div className="flex gap-2">
-                                    <Input
-                                      value={newCategoryName}
-                                      onChange={(e) => setNewCategoryName(e.target.value)}
-                                      placeholder="名称（例如：餐饮）"
-                                      className="h-8 text-xs"
-                                    />
-                                    <Input
-                                      value={newCategoryId}
-                                      onChange={(e) => setNewCategoryId(e.target.value)}
-                                      placeholder="ID（可选）"
-                                      className="h-8 text-xs font-mono"
-                                    />
-                                    <Button size="sm" variant="outline" onClick={() => void addCategory()} disabled={busy}>
+                              </div>
+                              <div className="space-y-1">
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">新增分类</div>
+                                <div className="flex gap-2">
+                                  <Input
+                                    value={newCategoryName}
+                                    onChange={(e) => setNewCategoryName(e.target.value)}
+                                    placeholder="名称（例如：餐饮）"
+                                    className="h-8 text-xs"
+                                  />
+                                  <Input
+                                    value={newCategoryId}
+                                    onChange={(e) => setNewCategoryId(e.target.value)}
+                                    placeholder="ID（可选）"
+                                    className="h-8 text-xs font-mono"
+                                  />
+                                  <Button size="sm" variant="outline" onClick={() => void addCategory()} disabled={busy}>
                                     新增
-                                    </Button>
-                                  </div>
+                                  </Button>
                                 </div>
-                              </>
-                            ) : (
-                              <div className="col-span-2 text-xs text-muted-foreground">
-                                不记账规则会写入 <span className="font-mono">ignore_rules</span>，并批量设置 <span className="font-mono">final_ignored=true</span>。
+                              </div>
+                            </>
+                          ) : (
+                            <div className="col-span-2 text-xs text-muted-foreground">
+                              不记账规则会写入 <span className="font-mono">ignore_rules</span>，并批量设置 <span className="font-mono">final_ignored=true</span>。
                             </div>
                           )}
                         </div>

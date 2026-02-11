@@ -76,13 +76,13 @@ export function WorkflowPanel({
             onSelectFile={selectFile}
           />
         ) : (
-          <div className="flex flex-col items-center justify-center p-12 text-muted-foreground border-dashed border-2 rounded-lg bg-muted/5">
+          <div className="flex flex-col items-center justify-center p-12 text-muted-foreground border-dashed border-2 rounded-md bg-muted/5">
             <AlertCircle className="h-8 w-8 mb-2 opacity-20" />
             <p>请选择一个阶段查看详情</p>
           </div>
         )
       ) : (
-        <div className="flex flex-col items-center justify-center p-12 text-muted-foreground border-dashed border-2 rounded-lg bg-muted/5">
+        <div className="flex flex-col items-center justify-center p-12 text-muted-foreground border-dashed border-2 rounded-md bg-muted/5">
           <Ban className="h-8 w-8 mb-2 opacity-20" />
           <p>暂无可用阶段</p>
         </div>

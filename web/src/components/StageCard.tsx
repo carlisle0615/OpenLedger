@@ -174,7 +174,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
     const reasonsLeft = reasons.length - reasonsShown.length;
 
     return (
-        <Card className={cn("transition-all duration-200 border-l-4", stage.status === "running" ? "border-l-blue-500 shadow-md ring-1 ring-blue-500/20" : "border-l-transparent")}>
+        <Card className={cn("transition-all duration-200 border-l-4", stage.status === "running" ? "border-l-primary ring-1 ring-primary/20" : "border-l-transparent")}>
             <CardHeader className="pb-3 pt-4 px-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">

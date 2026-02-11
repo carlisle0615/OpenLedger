@@ -71,7 +71,7 @@ export function HeaderBar({
             </div>
 
             {/* Top Control Bar */}
-            <div className="flex flex-wrap items-center gap-4 px-4 py-2 border rounded-lg bg-card shadow-sm">
+            <div className="flex flex-wrap items-center gap-4 px-4 py-2 border rounded-md bg-card">
                 <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">后端</span>
                     <Input
@@ -152,7 +152,7 @@ export function HeaderBar({
                         <Play className="mr-2 h-3.5 w-3.5" /> 新建任务
                     </Button>
                     {!runId ? (
-                        <span className="relative inline-flex items-center text-amber-500 animate-pulse group">
+                        <span className="relative inline-flex items-center text-[hsl(var(--warning))] animate-pulse group">
                             <AlertCircle className="h-4 w-4" aria-label="新手提示" />
                             <span className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-56 -translate-x-1/2 rounded-md border bg-popover px-2 py-1 text-[11px] text-popover-foreground shadow-md opacity-0 transition-opacity duration-150 group-hover:opacity-100">
                                 新手提示：先测试连接，再新建任务，上传文件后运行流程。

@@ -51,12 +51,12 @@ export function WorkflowTimeline({
                             const connectorActive = isDone || isRunning;
                             const circleClass = cn(
                                 "mr-1.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors",
-                                isDone && "border-zinc-900 bg-zinc-900 text-white",
-                                isRunning && "border-blue-600 bg-blue-600 text-white",
-                                isFailed && "border-red-600 bg-red-600 text-white",
-                                needsReview && "border-amber-500 bg-amber-500 text-white",
-                                !isDone && !isRunning && !isFailed && !needsReview && isActive && "border-zinc-900 bg-white text-zinc-900",
-                                !isDone && !isRunning && !isFailed && !needsReview && !isActive && "border-zinc-300 bg-white text-zinc-300"
+                                isDone && "border-foreground bg-foreground text-background",
+                                isRunning && "border-primary bg-primary text-primary-foreground",
+                                isFailed && "border-destructive bg-destructive text-destructive-foreground",
+                                needsReview && "border-[hsl(var(--warning))] bg-[hsl(var(--warning))] text-[hsl(var(--warning-foreground))]",
+                                !isDone && !isRunning && !isFailed && !needsReview && isActive && "border-foreground bg-background text-foreground",
+                                !isDone && !isRunning && !isFailed && !needsReview && !isActive && "border-muted-foreground/30 bg-background text-muted-foreground/30"
                             );
                             const labelClass = cn(
                                 "max-w-[140px] truncate text-xs",
@@ -89,7 +89,7 @@ export function WorkflowTimeline({
                                             aria-hidden
                                             className={cn(
                                                 "mx-2 h-px w-8 shrink-0",
-                                                connectorActive ? "bg-zinc-400" : "bg-zinc-200"
+                                                connectorActive ? "bg-muted-foreground" : "bg-border"
                                             )}
                                         />
                                     )}
