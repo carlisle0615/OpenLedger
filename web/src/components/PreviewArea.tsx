@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { FileText, Download } from "lucide-react";
 import { FileItem, CsvPreview, PdfPreview } from "@/types";
 import { isPdfFile } from "@/utils/helpers";
@@ -135,7 +135,7 @@ export function PreviewArea({ selectedFile, runName, downloadHref, pdfPageHref, 
                   </span>
                 </div>
                 <div className="border rounded-md overflow-hidden">
-                  <Table>
+                  <table className="w-full caption-bottom text-sm">
                     <TableHeader>
                       <TableRow>
                         {csvPreview.columns.map((k) => <TableHead key={k} className="whitespace-nowrap h-8 text-xs">{k}</TableHead>)}
@@ -148,7 +148,7 @@ export function PreviewArea({ selectedFile, runName, downloadHref, pdfPageHref, 
                         </TableRow>
                       ))}
                     </TableBody>
-                  </Table>
+                  </table>
                 </div>
               </div>
             )}

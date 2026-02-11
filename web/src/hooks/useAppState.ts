@@ -27,7 +27,7 @@ export function useAppState() {
     const [pdfPreview, setPdfPreview] = useState<PdfPreview | null>(null);
     const [textPreview, setTextPreview] = useState<string>("");
     const [previewError, setPreviewError] = useState<string>("");
-    const [csvLimit] = useState<number>(80);
+    const [csvLimit] = useState<number>(200);
     const [config, setConfig] = useState<ClassifierConfig | null>(null);
     const [configText, setConfigText] = useState<string>("");
     const [cfgSaveToRun, setCfgSaveToRun] = useState(true);

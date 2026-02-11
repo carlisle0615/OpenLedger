@@ -177,7 +177,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
                 {isMatchStage && (
                     <div className="rounded-md border bg-muted/10 p-2">
                         <div className="flex items-center justify-between text-[11px]">
-                            <span className="font-medium text-muted-foreground">匹配统计</span>
+                            <span className="font-medium text-muted-foreground">匹配率 / 未匹配原因</span>
                             {loadingStats ? (
                                 <span className="text-[10px] text-muted-foreground">加载中...</span>
                             ) : matchStats ? (

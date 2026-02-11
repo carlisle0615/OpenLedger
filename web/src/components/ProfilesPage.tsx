@@ -359,7 +359,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                             {selected?.name || selectedMeta?.name || "用户详情"}
                         </CardTitle>
                     </CardHeader>
-                    <CardContent className="space-y-2">
+                    <CardContent className="space-y-3">
                         {selected ? (
                             <>
                                 <div className="text-[11px] text-muted-foreground font-mono">{selected.id}</div>
@@ -371,51 +371,49 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                         ) : (
                             <div className="text-[11px] text-muted-foreground italic">请选择用户</div>
                         )}
-                    </CardContent>
-                </Card>
 
-                <Card>
-                    <CardHeader className="py-3 flex flex-row items-center justify-between">
-                        <CardTitle className="text-base">一致性检查</CardTitle>
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2"
-                            onClick={() => checkIntegrity()}
-                            disabled={!selected?.id || integrityLoading || busy}
-                        >
-                            <RefreshCw className="h-3.5 w-3.5 mr-1" />
-                            检查
-                        </Button>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                        {!selected?.id ? (
-                            <div className="text-[11px] text-muted-foreground italic">请选择用户后检查</div>
-                        ) : integrityCheckedAt ? (
-                            <>
-                                <div className="text-[11px] text-muted-foreground">
-                                    最近检查：{integrityCheckedAt}
-                                </div>
-                                {integrityIssues.length ? (
-                                    <div className="space-y-1">
-                                        {integrityIssues.slice(0, 6).map((issue, idx) => (
-                                            <div key={`${issue.run_id}-${issue.issue}-${idx}`} className="text-[11px] text-muted-foreground">
-                                                <span className="font-mono">{issue.period_key || "-"}</span>
-                                                <span className="ml-2">{issueLabel(issue.issue)}</span>
-                                                {issue.run_id ? <span className="ml-2 font-mono">run={issue.run_id}</span> : null}
-                                            </div>
-                                        ))}
-                                        {integrityIssues.length > 6 ? (
-                                            <div className="text-[11px] text-muted-foreground">还有 {integrityIssues.length - 6} 条问题</div>
-                                        ) : null}
+                        <div className="pt-2 border-t space-y-2">
+                            <div className="flex items-center justify-between">
+                                <div className="text-xs font-medium">一致性检查</div>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 px-2"
+                                    onClick={() => checkIntegrity()}
+                                    disabled={!selected?.id || integrityLoading || busy}
+                                >
+                                    <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                                    检查
+                                </Button>
+                            </div>
+                            {!selected?.id ? (
+                                <div className="text-[11px] text-muted-foreground italic">请选择用户后检查</div>
+                            ) : integrityCheckedAt ? (
+                                <>
+                                    <div className="text-[11px] text-muted-foreground">
+                                        最近检查：{integrityCheckedAt}
                                     </div>
-                                ) : (
-                                    <div className="text-[11px] text-muted-foreground">未发现问题</div>
-                                )}
-                            </>
-                        ) : (
-                            <div className="text-[11px] text-muted-foreground">未检查</div>
-                        )}
+                                    {integrityIssues.length ? (
+                                        <div className="space-y-1">
+                                            {integrityIssues.slice(0, 4).map((issue, idx) => (
+                                                <div key={`${issue.run_id}-${issue.issue}-${idx}`} className="text-[11px] text-muted-foreground">
+                                                    <span className="font-mono">{issue.period_key || "-"}</span>
+                                                    <span className="ml-2">{issueLabel(issue.issue)}</span>
+                                                    {issue.run_id ? <span className="ml-2 font-mono">run={issue.run_id}</span> : null}
+                                                </div>
+                                            ))}
+                                            {integrityIssues.length > 4 ? (
+                                                <div className="text-[11px] text-muted-foreground">还有 {integrityIssues.length - 4} 条问题</div>
+                                            ) : null}
+                                        </div>
+                                    ) : (
+                                        <div className="text-[11px] text-muted-foreground">未发现问题</div>
+                                    )}
+                                </>
+                            ) : (
+                                <div className="text-[11px] text-muted-foreground">未检查</div>
+                            )}
+                        </div>
                     </CardContent>
                 </Card>
 
