@@ -14,6 +14,7 @@ import { UploadCard } from "@/components/UploadCard";
 import { SettingsCard } from "@/components/SettingsCard";
 import { PreviewArea } from "@/components/PreviewArea";
 import { WorkflowPanel } from "@/components/WorkflowPanel";
+import { WorkflowTimeline } from "@/components/WorkflowTimeline";
 import { ReviewModal } from "@/components/ReviewModal";
 
 
@@ -118,6 +119,15 @@ export default function App() {
                       请上传 PDF/CSV/XLSX 文件以开始处理。
                     </CardContent>
                   </Card>
+                ) : null}
+
+                {state?.stages?.length ? (
+                  <WorkflowTimeline
+                    state={state}
+                    selectedStageId={selectedStageId}
+                    setSelectedStageId={setSelectedStageId}
+                    className="mb-2"
+                  />
                 ) : null}
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">

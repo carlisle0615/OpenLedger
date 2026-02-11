@@ -39,8 +39,8 @@ export function HeaderBar({
 }: HeaderBarProps) {
     return (
         <>
-            <div className="flex items-center justify-between">
-                <h1 className="text-2xl font-semibold tracking-tight">OpenLedger</h1>
+            <div className="flex items-center justify-between py-2">
+                <h1 className="text-xl font-semibold tracking-tight">OpenLedger</h1>
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1 rounded-md border bg-card p-1">
                         <Button
@@ -71,7 +71,7 @@ export function HeaderBar({
             </div>
 
             {/* Top Control Bar */}
-            <div className="flex flex-wrap items-center gap-4 p-4 border rounded-lg bg-card shadow-sm">
+            <div className="flex flex-wrap items-center gap-4 px-4 py-2 border rounded-lg bg-card shadow-sm">
                 <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">后端</span>
                     <Input
