@@ -118,6 +118,29 @@ def _preview_xlsx(file_path: Path, limit: int, offset: int) -> dict[str, Any]:
         wb.close()
 
 
+def _count_csv_rows(path: Path, status_key: str = "match_status") -> tuple[int, dict[str, int]]:
+    import csv
+
+    if not path.exists() or not path.is_file():
+        return 0, {}
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            return 0, {}
+        count = 0
+        reasons: dict[str, int] = {}
+        has_status = status_key in reader.fieldnames
+        for row in reader:
+            count += 1
+            if not has_status:
+                continue
+            status = str(row.get(status_key, "") or "").strip()
+            if not status:
+                status = "unknown"
+            reasons[status] = reasons.get(status, 0) + 1
+    return count, reasons
+
+
 def _parse_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     raw = _read_request_body(handler)
     if not raw:
@@ -235,7 +258,8 @@ def _stage_io(root: Path, run_id: str, stage_id: str) -> dict[str, Any]:
             + one_item(out_dir / "alipay.normalized.csv"),
             "outputs": one_item(out_dir / "credit_card.enriched.csv")
             + one_item(out_dir / "credit_card.unmatched.csv")
-            + one_item(out_dir / "credit_card.match.xlsx"),
+            + one_item(out_dir / "credit_card.match.xlsx")
+            + one_item(out_dir / "credit_card.match_debug.csv"),
         }
 
     if stage_id == "match_bank":
@@ -249,7 +273,8 @@ def _stage_io(root: Path, run_id: str, stage_id: str) -> dict[str, Any]:
             + one_item(out_dir / "alipay.normalized.csv"),
             "outputs": one_item(out_dir / "bank.enriched.csv")
             + one_item(out_dir / "bank.unmatched.csv")
-            + one_item(out_dir / "bank.match.xlsx"),
+            + one_item(out_dir / "bank.match.xlsx")
+            + one_item(out_dir / "bank.match_debug.csv"),
         }
 
     if stage_id == "build_unified":
@@ -491,6 +516,39 @@ def make_handler(server: WorkflowHTTPServer):
                 stage_id = m.group("stage_id")
                 _send_json(
                     self, 200, _stage_io(root=root, run_id=run_id, stage_id=stage_id)
+                )
+                return
+
+            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/stats/match", path)
+            if m:
+                run_id = m.group("run_id")
+                stage_id = (qs.get("stage") or [""])[0]
+                if stage_id not in {"match_credit_card", "match_bank"}:
+                    _send_json(self, 400, {"error": "stage must be match_credit_card or match_bank"})
+                    return
+                paths = make_paths(root, run_id)
+                if stage_id == "match_credit_card":
+                    matched_path = paths.out_dir / "credit_card.enriched.csv"
+                    unmatched_path = paths.out_dir / "credit_card.unmatched.csv"
+                else:
+                    matched_path = paths.out_dir / "bank.enriched.csv"
+                    unmatched_path = paths.out_dir / "bank.unmatched.csv"
+                matched_count, _ = _count_csv_rows(matched_path)
+                unmatched_count, unmatched_reasons = _count_csv_rows(unmatched_path)
+                total = matched_count + unmatched_count
+                match_rate = round(matched_count / total, 4) if total else 0.0
+                reasons_sorted = sorted(unmatched_reasons.items(), key=lambda x: (-x[1], x[0]))
+                _send_json(
+                    self,
+                    200,
+                    {
+                        "stage_id": stage_id,
+                        "matched": matched_count,
+                        "unmatched": unmatched_count,
+                        "total": total,
+                        "match_rate": match_rate,
+                        "unmatched_reasons": [{"reason": k, "count": v} for k, v in reasons_sorted],
+                    },
                 )
                 return
 

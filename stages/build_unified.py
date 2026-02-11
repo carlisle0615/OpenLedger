@@ -76,6 +76,219 @@ def _has_card_pay_method(pay_method: Any) -> bool:
     return bool(_CREDIT_LAST4_RE.search(s) or _DEBIT_LAST4_RE.search(s))
 
 
+def _clean_str(value: Any) -> str:
+    s = str(value or "").strip()
+    return "" if s.lower() == "nan" else s
+
+
+def _split_joined(value: Any) -> list[str]:
+    s = _clean_str(value)
+    if not s:
+        return []
+    return [v.strip() for v in s.split("|") if v.strip()]
+
+
+def _dedup(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen = set()
+    for v in values:
+        s = _clean_str(v)
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _detail_descriptor(channel: str, row: pd.Series) -> str:
+    channel = _clean_str(channel)
+    trans_date = _clean_str(row.get("trans_date"))
+    trans_time = _clean_str(row.get("trans_time"))
+    amount = _clean_str(row.get("amount"))
+    counterparty = _clean_str(row.get("counterparty"))
+    item = _clean_str(row.get("item"))
+    trade_no = _clean_str(row.get("trade_no"))
+    merchant_no = _clean_str(row.get("merchant_no"))
+
+    parts: list[str] = []
+    if channel:
+        parts.append(channel)
+    if trans_date or trans_time:
+        parts.append(f"{trans_date} {trans_time}".strip())
+    if amount:
+        parts.append(f"￥{amount}")
+    if counterparty or item:
+        parts.append(f"{counterparty} {item}".strip())
+
+    id_parts: list[str] = []
+    if trade_no:
+        id_parts.append(f"trade_no={trade_no}")
+    if merchant_no:
+        id_parts.append(f"merchant_no={merchant_no}")
+    if id_parts:
+        parts.append("[" + ", ".join(id_parts) + "]")
+
+    return " ".join([p for p in parts if p])
+
+
+def _build_detail_lookup(wechat_norm: pd.DataFrame, alipay_norm: pd.DataFrame) -> dict[str, list[str]]:
+    lookup: dict[str, list[str]] = {}
+
+    def ingest(df: pd.DataFrame, channel: str) -> None:
+        if df.empty:
+            return
+        df = _ensure_cols(
+            df.copy(),
+            [
+                "trans_time",
+                "trans_date",
+                "amount",
+                "counterparty",
+                "item",
+                "trade_no",
+                "merchant_no",
+            ],
+        )
+        for _, row in df.iterrows():
+            desc = _detail_descriptor(channel, row)
+            for key in [_clean_str(row.get("trade_no")), _clean_str(row.get("merchant_no"))]:
+                if not key:
+                    continue
+                lookup.setdefault(key, []).append(desc)
+
+    ingest(wechat_norm, "wechat")
+    ingest(alipay_norm, "alipay")
+
+    return {k: _dedup(v) for k, v in lookup.items()}
+
+
+def _extract_detail_ids(row: pd.Series) -> list[str]:
+    return _dedup(_split_joined(row.get("detail_trade_no")) + _split_joined(row.get("detail_merchant_no")))
+
+
+def _fallback_detail_summary(row: pd.Series) -> str:
+    channels = _split_joined(row.get("detail_channel"))
+    times = _split_joined(row.get("detail_trans_time"))
+    parties = _split_joined(row.get("detail_counterparty"))
+    items = _split_joined(row.get("detail_item"))
+    parts: list[str] = []
+    if channels:
+        parts.append("渠道=" + ", ".join(channels))
+    if times:
+        parts.append("时间=" + ", ".join(times))
+    if parties:
+        parts.append("对手方=" + ", ".join(parties))
+    if items:
+        parts.append("商品=" + ", ".join(items))
+    return "；".join(parts)
+
+
+def _detail_refs_for_row(row: pd.Series, detail_lookup: dict[str, list[str]]) -> list[str]:
+    refs: list[str] = []
+    for key in _extract_detail_ids(row):
+        hits = detail_lookup.get(key)
+        if hits:
+            refs.extend(hits)
+        else:
+            refs.append(f"id={key}")
+    refs = _dedup(refs)
+    if refs:
+        return refs
+    fallback = _fallback_detail_summary(row)
+    return [fallback] if fallback else []
+
+
+def _join_refs(refs: list[str], limit: int = 6) -> str:
+    refs = _dedup(refs)
+    if not refs:
+        return ""
+    if len(refs) <= limit:
+        return " | ".join(refs)
+    return " | ".join(refs[:limit]) + f" 等{len(refs)}条"
+
+
+def _detail_match_remark(row: pd.Series, detail_to_bill_map: dict[str, list[str]]) -> str:
+    if not detail_to_bill_map:
+        return ""
+    ids = _dedup([_clean_str(row.get("trade_no")), _clean_str(row.get("merchant_no"))])
+    if not ids:
+        return ""
+    bills = _dedup(sum([detail_to_bill_map.get(k, []) for k in ids], []))
+    if not bills:
+        return ""
+    return f"匹配到账单：{_join_refs(bills)}"
+
+
+def _cc_account(source: Any, card_last4: Any) -> str:
+    src = _clean_str(source)
+    last4 = _clean_str(card_last4) or "?"
+    if src.endswith("_credit_card"):
+        bank_id = src.split("_", 1)[0].upper()
+        return f"{bank_id} CreditCard({last4})"
+    return f"{src}({last4})" if src else f"CreditCard({last4})"
+
+
+def _bank_account(source: Any, account_last4: Any) -> str:
+    src = _clean_str(source)
+    last4 = _clean_str(account_last4) or "?"
+    if src.endswith("_statement"):
+        bank_id = src.split("_", 1)[0].upper()
+        return f"{bank_id} Debit({last4})"
+    return f"{src}({last4})" if src else f"Debit({last4})"
+
+
+def _bill_descriptor_cc(row: pd.Series) -> str:
+    account = _cc_account(row.get("source"), row.get("card_last4"))
+    trans_date = _clean_str(row.get("trans_date"))
+    amount = _clean_str(row.get("amount_rmb"))
+    desc = _clean_str(row.get("description"))
+    parts = [p for p in [account, trans_date, amount, desc] if p]
+    return " ".join(parts)
+
+
+def _bill_descriptor_bank(row: pd.Series) -> str:
+    account = _bank_account(row.get("source"), row.get("account_last4"))
+    trans_date = _clean_str(row.get("trans_date"))
+    amount = _clean_str(row.get("amount"))
+    summary = _clean_str(row.get("summary"))
+    counterparty = _clean_str(row.get("counterparty"))
+    tail = summary or counterparty
+    parts = [p for p in [account, trans_date, amount, tail] if p]
+    return " ".join(parts)
+
+
+def _build_detail_to_bill_map(
+    cc_enriched: pd.DataFrame, bank_enriched: pd.DataFrame
+) -> dict[str, list[str]]:
+    mapping: dict[str, list[str]] = {}
+
+    def ingest(df: pd.DataFrame, bill_fn) -> None:
+        if df.empty:
+            return
+        df = _ensure_cols(
+            df.copy(),
+            [
+                "match_status",
+                "detail_trade_no",
+                "detail_merchant_no",
+            ],
+        )
+        for _, row in df.iterrows():
+            if _clean_str(row.get("match_status")) != "matched":
+                continue
+            ids = _extract_detail_ids(row)
+            if not ids:
+                continue
+            bill = bill_fn(row)
+            for key in ids:
+                mapping.setdefault(key, []).append(bill)
+
+    ingest(cc_enriched, _bill_descriptor_cc)
+    ingest(bank_enriched, _bill_descriptor_bank)
+
+    return {k: _dedup(v) for k, v in mapping.items()}
+
+
 def _is_refund_like(direction: str, item: str, status: str, category: str) -> bool:
     if "退款" in (item or "") or "退款" in (status or "") or "退款" in (category or ""):
         return True
@@ -103,18 +316,27 @@ def _empty_unified_df() -> pd.DataFrame:
     return pd.DataFrame(columns=UNIFIED_COLUMNS)
 
 
-def _wechat_wallet_rows(wechat_norm: pd.DataFrame) -> pd.DataFrame:
+def _wechat_wallet_rows(wechat_norm: pd.DataFrame, detail_to_bill_map: dict[str, list[str]]) -> pd.DataFrame:
     df = wechat_norm.copy()
     df = _ensure_cols(
         df,
-        ["pay_method", "amount", "direction", "trans_time", "trans_date", "counterparty", "item", "trans_type", "status"],
+        [
+            "pay_method",
+            "amount",
+            "direction",
+            "trans_time",
+            "trans_date",
+            "counterparty",
+            "item",
+            "trans_type",
+            "status",
+            "trade_no",
+            "merchant_no",
+        ],
     )
     if df.empty:
         return _empty_unified_df()
-    df["is_card"] = df["pay_method"].map(_has_card_pay_method)
-    wallet = df[~df["is_card"]].copy()
-    if wallet.empty:
-        return _empty_unified_df()
+    wallet = df.copy()
     wallet["primary_source"] = "wechat"
     wallet["account"] = "WeChat(" + wallet["pay_method"].fillna("").astype(str).str.strip().replace({"": "wallet"}) + ")"
     wallet["currency"] = "CNY"
@@ -130,8 +352,11 @@ def _wechat_wallet_rows(wechat_norm: pd.DataFrame) -> pd.DataFrame:
     wallet["category_best"] = wallet["trans_type"].fillna("")
     wallet["pay_method_best"] = wallet["pay_method"].fillna("")
     wallet["sources"] = "wechat"
-    wallet["remark_unified"] = ""
     wallet["match_status"] = ""
+    wallet["remark_unified"] = wallet.apply(
+        lambda r: _detail_match_remark(r, detail_to_bill_map),
+        axis=1,
+    )
     out = pd.DataFrame(
         {
             "trade_time": wallet["trans_time"].fillna(""),
@@ -158,7 +383,7 @@ def _wechat_wallet_rows(wechat_norm: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _alipay_wallet_rows(alipay_norm: pd.DataFrame) -> pd.DataFrame:
+def _alipay_wallet_rows(alipay_norm: pd.DataFrame, detail_to_bill_map: dict[str, list[str]]) -> pd.DataFrame:
     df = alipay_norm.copy()
     df = _ensure_cols(
         df,
@@ -173,14 +398,13 @@ def _alipay_wallet_rows(alipay_norm: pd.DataFrame) -> pd.DataFrame:
             "counterparty_account",
             "item",
             "status",
+            "trade_no",
+            "merchant_no",
         ],
     )
     if df.empty:
         return _empty_unified_df()
-    df["is_card"] = df["pay_method"].map(_has_card_pay_method)
-    wallet = df[~df["is_card"]].copy()
-    if wallet.empty:
-        return _empty_unified_df()
+    wallet = df.copy()
     wallet["primary_source"] = "alipay"
     wallet["account"] = "Alipay(" + wallet["pay_method"].fillna("").astype(str).str.strip().replace({"": "wallet"}) + ")"
     wallet["currency"] = "CNY"
@@ -196,8 +420,11 @@ def _alipay_wallet_rows(alipay_norm: pd.DataFrame) -> pd.DataFrame:
     wallet["category_best"] = wallet["category"].fillna("")
     wallet["pay_method_best"] = wallet["pay_method"].fillna("")
     wallet["sources"] = "alipay"
-    wallet["remark_unified"] = ""
     wallet["match_status"] = ""
+    wallet["remark_unified"] = wallet.apply(
+        lambda r: _detail_match_remark(r, detail_to_bill_map),
+        axis=1,
+    )
     out = pd.DataFrame(
         {
             "trade_time": wallet["trans_time"].fillna(""),
@@ -224,7 +451,11 @@ def _alipay_wallet_rows(alipay_norm: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _credit_card_rows(cc_enriched: pd.DataFrame, cc_unmatched: pd.DataFrame) -> pd.DataFrame:
+def _credit_card_rows(
+    cc_enriched: pd.DataFrame,
+    cc_unmatched: pd.DataFrame,
+    detail_lookup: dict[str, list[str]],
+) -> pd.DataFrame:
     cc = pd.concat([cc_enriched, cc_unmatched], ignore_index=True).fillna("")
     cc = _ensure_cols(
         cc,
@@ -249,16 +480,7 @@ def _credit_card_rows(cc_enriched: pd.DataFrame, cc_unmatched: pd.DataFrame) -> 
     if cc.empty:
         return _empty_unified_df()
     cc["primary_source"] = cc.get("source", "credit_card").map(lambda x: str(x).strip() or "credit_card")
-
-    def cc_account(row: pd.Series) -> str:
-        src = str(row.get("primary_source") or "").strip()
-        last4 = str(row.get("card_last4") or "").strip() or "?"
-        if src.endswith("_credit_card"):
-            bank_id = src.split("_", 1)[0].upper()
-            return f"{bank_id} CreditCard({last4})"
-        return f"{src}({last4})" if src else f"CreditCard({last4})"
-
-    cc["account"] = cc.apply(cc_account, axis=1)
+    cc["account"] = cc.apply(lambda r: _cc_account(r.get("primary_source"), r.get("card_last4")), axis=1)
     cc["currency"] = "CNY"
     cc["amount_dec"] = cc["amount_rmb"].map(_to_decimal)
     cc["amount_abs_dec"] = cc["amount_dec"].map(lambda d: abs(d))
@@ -304,14 +526,23 @@ def _credit_card_rows(cc_enriched: pd.DataFrame, cc_unmatched: pd.DataFrame) -> 
         else f"{r.get('primary_source','')}".strip(),
         axis=1,
     )
-    cc["remark_unified"] = cc.apply(
-        lambda r: (
-            f"多源匹配：{r.get('match_sources')}"
-            if r.get("match_status") == "matched"
-            else f"未匹配明细：{r.get('match_status')}" if r.get("match_status") else ""
-        ),
-        axis=1,
-    )
+    def cc_remark(row: pd.Series) -> str:
+        status = _clean_str(row.get("match_status"))
+        if status == "matched":
+            parts: list[str] = []
+            match_sources = _clean_str(row.get("match_sources"))
+            if match_sources:
+                parts.append(f"多源匹配：{match_sources}")
+            merge_refs = _detail_refs_for_row(row, detail_lookup)
+            merge_text = _join_refs(merge_refs)
+            if merge_text:
+                parts.append(f"合并明细：{merge_text}")
+            return "；".join(parts)
+        if status:
+            return f"未匹配明细：{status}"
+        return ""
+
+    cc["remark_unified"] = cc.apply(cc_remark, axis=1)
 
     out = pd.DataFrame(
         {
@@ -336,7 +567,11 @@ def _credit_card_rows(cc_enriched: pd.DataFrame, cc_unmatched: pd.DataFrame) -> 
     return out
 
 
-def _bank_rows(bank_enriched: pd.DataFrame, bank_unmatched: pd.DataFrame) -> pd.DataFrame:
+def _bank_rows(
+    bank_enriched: pd.DataFrame,
+    bank_unmatched: pd.DataFrame,
+    detail_lookup: dict[str, list[str]],
+) -> pd.DataFrame:
     bank = pd.concat([bank_enriched, bank_unmatched], ignore_index=True).fillna("")
     bank = _ensure_cols(
         bank,
@@ -361,16 +596,7 @@ def _bank_rows(bank_enriched: pd.DataFrame, bank_unmatched: pd.DataFrame) -> pd.
     if bank.empty:
         return _empty_unified_df()
     bank["primary_source"] = bank.get("source", "bank_statement").map(lambda x: str(x).strip() or "bank_statement")
-
-    def bank_account(row: pd.Series) -> str:
-        src = str(row.get("primary_source") or "").strip()
-        last4 = str(row.get("account_last4") or "").strip() or "?"
-        if src.endswith("_statement"):
-            bank_id = src.split("_", 1)[0].upper()
-            return f"{bank_id} Debit({last4})"
-        return f"{src}({last4})" if src else f"Debit({last4})"
-
-    bank["account"] = bank.apply(bank_account, axis=1)
+    bank["account"] = bank.apply(lambda r: _bank_account(r.get("primary_source"), r.get("account_last4")), axis=1)
     bank["currency"] = bank.get("currency", "CNY").fillna("CNY")
     bank["amount_dec"] = bank["amount"].map(_to_decimal)
     bank["amount_abs_dec"] = bank["amount_dec"].map(lambda d: abs(d))
@@ -405,14 +631,23 @@ def _bank_rows(bank_enriched: pd.DataFrame, bank_unmatched: pd.DataFrame) -> pd.
         else f"{r.get('primary_source','')}".strip(),
         axis=1,
     )
-    bank["remark_unified"] = bank.apply(
-        lambda r: (
-            f"多源匹配：{r.get('match_sources')}"
-            if r.get("match_status") == "matched"
-            else f"未匹配明细：{r.get('match_status')}" if r.get("match_status") else ""
-        ),
-        axis=1,
-    )
+    def bank_remark(row: pd.Series) -> str:
+        status = _clean_str(row.get("match_status"))
+        if status == "matched":
+            parts: list[str] = []
+            match_sources = _clean_str(row.get("match_sources"))
+            if match_sources:
+                parts.append(f"多源匹配：{match_sources}")
+            merge_refs = _detail_refs_for_row(row, detail_lookup)
+            merge_text = _join_refs(merge_refs)
+            if merge_text:
+                parts.append(f"合并明细：{merge_text}")
+            return "；".join(parts)
+        if status:
+            return f"未匹配明细：{status}"
+        return ""
+
+    bank["remark_unified"] = bank.apply(bank_remark, axis=1)
 
     out = pd.DataFrame(
         {
@@ -470,9 +705,18 @@ def build_unified(
     wechat_norm = _read_csv_or_empty(wechat_norm_path, wechat_required)
     alipay_norm = _read_csv_or_empty(alipay_norm_path, alipay_required)
 
-    cc_out = _credit_card_rows(cc_enriched, cc_unmatched)
-    bank_out = _bank_rows(bank_enriched, bank_unmatched)
-    wallet_out = pd.concat([_wechat_wallet_rows(wechat_norm), _alipay_wallet_rows(alipay_norm)], ignore_index=True)
+    detail_lookup = _build_detail_lookup(wechat_norm, alipay_norm)
+    detail_to_bill = _build_detail_to_bill_map(cc_enriched, bank_enriched)
+
+    cc_out = _credit_card_rows(cc_enriched, cc_unmatched, detail_lookup)
+    bank_out = _bank_rows(bank_enriched, bank_unmatched, detail_lookup)
+    wallet_out = pd.concat(
+        [
+            _wechat_wallet_rows(wechat_norm, detail_to_bill),
+            _alipay_wallet_rows(alipay_norm, detail_to_bill),
+        ],
+        ignore_index=True,
+    )
 
     all_txn = pd.concat([cc_out, bank_out, wallet_out], ignore_index=True)
     # 先按日期、再按时间排序（时间可能为空）。

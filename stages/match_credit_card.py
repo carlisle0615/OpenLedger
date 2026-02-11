@@ -8,6 +8,7 @@
 - `<out-dir>/credit_card.enriched.csv`
 - `<out-dir>/credit_card.unmatched.csv`
 - `<out-dir>/credit_card.match.xlsx`
+- `<out-dir>/credit_card.match_debug.csv`
 
 示例：
 - `uv run python -m stages.match_credit_card --out-dir output`
@@ -26,6 +27,28 @@ import pandas as pd
 from rapidfuzz import fuzz
 
 from ._common import log, make_parser
+
+MATCH_DEBUG_COLUMNS = [
+    "row_index",
+    "section",
+    "trans_date",
+    "post_date",
+    "amount_rmb",
+    "card_last4",
+    "description",
+    "channels_tried",
+    "base_date",
+    "candidate_count_exact",
+    "candidate_count_sum",
+    "best_date_diff_days",
+    "best_direction_penalty",
+    "best_text_similarity",
+    "match_method",
+    "match_status",
+    "match_confidence",
+    "chosen_count",
+    "chosen_channels",
+]
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -240,21 +263,48 @@ def match_credit_card(
     used_detail_idx: set[int] = set()
     match_rows: list[dict[str, Any]] = []
     unmatched_rows: list[dict[str, Any]] = []
+    debug_rows: list[dict[str, Any]] = []
 
-    for _, row in cc.iterrows():
+    for row_index, row in cc.iterrows():
         base = {col: row.get(col, "") for col in cc_raw_cols}
         section = (row.get("section") or "").strip()
+        debug: dict[str, Any] = {
+            "row_index": row_index,
+            "section": section,
+            "trans_date": row.get("trans_date", ""),
+            "post_date": row.get("post_date", ""),
+            "amount_rmb": row.get("amount_rmb", ""),
+            "card_last4": row.get("card_last4", ""),
+            "description": row.get("description", ""),
+            "channels_tried": "",
+            "base_date": "",
+            "candidate_count_exact": 0,
+            "candidate_count_sum": 0,
+            "best_date_diff_days": "",
+            "best_direction_penalty": "",
+            "best_text_similarity": "",
+            "match_method": "",
+            "match_status": "",
+            "match_confidence": "",
+            "chosen_count": 0,
+            "chosen_channels": "",
+        }
         if section not in {"消费", "退款"}:
             unmatched_rows.append({**base, "match_status": "skipped_section"})
+            debug["match_status"] = "skipped_section"
+            debug_rows.append(debug)
             continue
 
         desc = (row.get("description") or "").strip()
         last4 = (row.get("card_last4") or "").strip()
         if not last4:
             unmatched_rows.append({**base, "match_status": "missing_last4"})
+            debug["match_status"] = "missing_last4"
+            debug_rows.append(debug)
             continue
 
         channels = _candidate_channels(desc)
+        debug["channels_tried"] = "+".join(channels)
 
         amount_abs: Decimal = row["amount_abs"]
         base_dates: list[date] = [row["trans_date_dt"]]
@@ -263,6 +313,7 @@ def match_credit_card(
 
         candidates = pd.DataFrame()
         candidates_sum = pd.DataFrame()
+        base_date_for_score: date | None = None
         for base_date in base_dates:
             date_set = {base_date + timedelta(days=d) for d in range(-max_day_diff, max_day_diff + 1)}
             cand = details[
@@ -283,6 +334,11 @@ def match_credit_card(
                 base_date_for_score = base_date
                 break
 
+        debug["candidate_count_exact"] = int(len(candidates))
+        debug["candidate_count_sum"] = int(len(candidates_sum))
+        if base_date_for_score:
+            debug["base_date"] = base_date_for_score.isoformat()
+
         if candidates.empty and candidates_sum.empty:
             unmatched_rows.append(
                 {
@@ -291,6 +347,8 @@ def match_credit_card(
                     "match_channels_tried": "+".join(channels),
                 }
             )
+            debug["match_status"] = "no_candidate"
+            debug_rows.append(debug)
             continue
 
         best_idx: int | None = None
@@ -335,6 +393,8 @@ def match_credit_card(
 
         if not chosen_rows:
             unmatched_rows.append({**base, "match_status": "all_candidates_used"})
+            debug["match_status"] = "all_candidates_used"
+            debug_rows.append(debug)
             continue
 
         src = str(base.get("source") or "").strip() or "credit_card"
@@ -380,6 +440,20 @@ def match_credit_card(
         )
         match_rows.append(out)
 
+        debug.update(
+            {
+                "match_status": "matched",
+                "match_method": match_method,
+                "best_date_diff_days": best_score[0] if best_score else "",
+                "best_direction_penalty": best_score[1] if best_score else "",
+                "best_text_similarity": sim if best_score else "",
+                "match_confidence": confidence,
+                "chosen_count": len(chosen_rows),
+                "chosen_channels": _join_detail_values([r.get("channel") for r in chosen_rows]),
+            }
+        )
+        debug_rows.append(debug)
+
     out_dir.mkdir(parents=True, exist_ok=True)
     matched_path = out_dir / "credit_card.enriched.csv"
     unmatched_path = out_dir / "credit_card.unmatched.csv"
@@ -415,9 +489,14 @@ def match_credit_card(
         matched_df.to_excel(writer, index=False, sheet_name="enriched")
         unmatched_df.to_excel(writer, index=False, sheet_name="unmatched")
 
+    debug_path = out_dir / "credit_card.match_debug.csv"
+    debug_df = pd.DataFrame(debug_rows, columns=MATCH_DEBUG_COLUMNS)
+    debug_df.to_csv(debug_path, index=False, encoding="utf-8")
+
     log("match_credit_card", f"已匹配={len(match_rows)} 输出={matched_path}")
     log("match_credit_card", f"未匹配={len(unmatched_rows)} 输出={unmatched_path}")
     log("match_credit_card", f"Excel={xlsx_path}")
+    log("match_credit_card", f"Debug={debug_path}")
 
 
 def main() -> None:

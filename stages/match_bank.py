@@ -8,6 +8,7 @@
 - `<out-dir>/bank.enriched.csv`
 - `<out-dir>/bank.unmatched.csv`
 - `<out-dir>/bank.match.xlsx`
+- `<out-dir>/bank.match_debug.csv`
 
 示例：
 - `uv run python -m stages.match_bank --out-dir output`
@@ -26,6 +27,25 @@ import pandas as pd
 from rapidfuzz import fuzz
 
 from ._common import log, make_parser
+
+MATCH_DEBUG_COLUMNS = [
+    "row_index",
+    "account_last4",
+    "trans_date",
+    "amount",
+    "summary",
+    "counterparty",
+    "candidate_count_exact",
+    "candidate_count_sum",
+    "best_date_diff_days",
+    "best_direction_penalty",
+    "best_text_similarity",
+    "match_method",
+    "match_status",
+    "match_confidence",
+    "chosen_count",
+    "chosen_channels",
+]
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -193,6 +213,7 @@ def match_bank_statements(
 
     enriched_rows: list[dict[str, Any]] = []
     unmatched_rows: list[dict[str, Any]] = []
+    debug_rows: list[dict[str, Any]] = []
     observed_raw_cols: set[str] = set()
 
     for bank_csv in bank_csvs:
@@ -203,18 +224,40 @@ def match_bank_statements(
         df["amount_dec"] = df["amount"].map(_to_decimal)
         df["amount_abs"] = df["amount_dec"].map(lambda d: abs(d))
 
-        for _, row in df.iterrows():
+        for row_index, row in df.iterrows():
             base = {col: row.get(col, "") for col in raw_cols}
             account_last4 = str(row.get("account_last4") or "").strip()
             summary = str(row.get("summary") or "").strip()
             counterparty = str(row.get("counterparty") or "").strip()
+            debug: dict[str, Any] = {
+                "row_index": row_index,
+                "account_last4": account_last4,
+                "trans_date": row.get("trans_date", ""),
+                "amount": row.get("amount", ""),
+                "summary": summary,
+                "counterparty": counterparty,
+                "candidate_count_exact": 0,
+                "candidate_count_sum": 0,
+                "best_date_diff_days": "",
+                "best_direction_penalty": "",
+                "best_text_similarity": "",
+                "match_method": "",
+                "match_status": "",
+                "match_confidence": "",
+                "chosen_count": 0,
+                "chosen_channels": "",
+            }
 
             if not account_last4:
                 unmatched_rows.append({**base, "match_status": "missing_account_last4"})
+                debug["match_status"] = "missing_account_last4"
+                debug_rows.append(debug)
                 continue
 
             if not _should_attempt_match(summary, counterparty):
                 unmatched_rows.append({**base, "match_status": "skipped_non_payment"})
+                debug["match_status"] = "skipped_non_payment"
+                debug_rows.append(debug)
                 continue
 
             amount_abs: Decimal = row["amount_abs"]
@@ -232,8 +275,13 @@ def match_bank_statements(
                 & (details["trans_date_dt"].isin(date_set))
             ]
 
+            debug["candidate_count_exact"] = int(len(candidates))
+            debug["candidate_count_sum"] = int(len(candidates_sum))
+
             if candidates.empty and candidates_sum.empty:
                 unmatched_rows.append({**base, "match_status": "no_candidate"})
+                debug["match_status"] = "no_candidate"
+                debug_rows.append(debug)
                 continue
 
             is_refund = ("退款" in summary) or (row["amount_dec"] > 0 and summary.endswith("退款"))
@@ -278,6 +326,8 @@ def match_bank_statements(
 
             if not chosen_rows:
                 unmatched_rows.append({**base, "match_status": "all_candidates_used"})
+                debug["match_status"] = "all_candidates_used"
+                debug_rows.append(debug)
                 continue
 
             src = str(base.get("source") or "").strip() or "bank_statement"
@@ -322,6 +372,20 @@ def match_bank_statements(
                 }
             )
             enriched_rows.append(out)
+
+            debug.update(
+                {
+                    "match_status": "matched",
+                    "match_method": match_method,
+                    "best_date_diff_days": best_score[0] if best_score else "",
+                    "best_direction_penalty": best_score[1] if best_score else "",
+                    "best_text_similarity": sim if best_score else "",
+                    "match_confidence": confidence,
+                    "chosen_count": len(chosen_rows),
+                    "chosen_channels": _join_detail_values([r.get("channel") for r in chosen_rows]),
+                }
+            )
+            debug_rows.append(debug)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     enriched_path = out_dir / "bank.enriched.csv"
@@ -372,9 +436,14 @@ def match_bank_statements(
         enriched_df.to_excel(writer, index=False, sheet_name="enriched")
         unmatched_df.to_excel(writer, index=False, sheet_name="unmatched")
 
+    debug_path = out_dir / "bank.match_debug.csv"
+    debug_df = pd.DataFrame(debug_rows, columns=MATCH_DEBUG_COLUMNS)
+    debug_df.to_csv(debug_path, index=False, encoding="utf-8")
+
     log("match_bank", f"已匹配={len(enriched_df)} 输出={enriched_path}")
     log("match_bank", f"未匹配={len(unmatched_df)} 输出={unmatched_path}")
     log("match_bank", f"Excel={xlsx_path}")
+    log("match_bank", f"Debug={debug_path}")
 
 
 def main() -> None:

@@ -41,6 +41,15 @@ export type ClassifierConfig = {
 export type FileItem = { path: string; name: string; exists: boolean; size?: number };
 export type StageIO = { stage_id: string; inputs: FileItem[]; outputs: FileItem[] };
 
+export type MatchStats = {
+    stage_id: string;
+    matched: number;
+    unmatched: number;
+    total: number;
+    match_rate: number;
+    unmatched_reasons: { reason: string; count: number }[];
+};
+
 export type CsvPreview = {
     columns: string[];
     rows: Record<string, string>[];

@@ -215,9 +215,31 @@ def _write_empty_credit_card_outputs(out_dir: Path) -> None:
         "match_confidence",
     ]
     unmatched_extra_cols = ["match_status", "match_channels_tried", "match_method", "match_confidence"]
+    debug_cols = [
+        "row_index",
+        "section",
+        "trans_date",
+        "post_date",
+        "amount_rmb",
+        "card_last4",
+        "description",
+        "channels_tried",
+        "base_date",
+        "candidate_count_exact",
+        "candidate_count_sum",
+        "best_date_diff_days",
+        "best_direction_penalty",
+        "best_text_similarity",
+        "match_method",
+        "match_status",
+        "match_confidence",
+        "chosen_count",
+        "chosen_channels",
+    ]
 
     _write_csv_header(out_dir / "credit_card.enriched.csv", base_cols + matched_extra_cols)
     _write_csv_header(out_dir / "credit_card.unmatched.csv", base_cols + unmatched_extra_cols)
+    _write_csv_header(out_dir / "credit_card.match_debug.csv", debug_cols)
 
 
 def _write_empty_bank_outputs(out_dir: Path) -> None:
@@ -252,9 +274,28 @@ def _write_empty_bank_outputs(out_dir: Path) -> None:
         "match_text_similarity",
         "match_confidence",
     ]
+    debug_cols = [
+        "row_index",
+        "account_last4",
+        "trans_date",
+        "amount",
+        "summary",
+        "counterparty",
+        "candidate_count_exact",
+        "candidate_count_sum",
+        "best_date_diff_days",
+        "best_direction_penalty",
+        "best_text_similarity",
+        "match_method",
+        "match_status",
+        "match_confidence",
+        "chosen_count",
+        "chosen_channels",
+    ]
 
     _write_csv_header(out_dir / "bank.enriched.csv", base_cols + extra_cols)
     _write_csv_header(out_dir / "bank.unmatched.csv", base_cols + ["match_status", "match_method", "match_confidence"])
+    _write_csv_header(out_dir / "bank.match_debug.csv", debug_cols)
 
 
 def _write_empty_export_outputs(out_dir: Path) -> None:
