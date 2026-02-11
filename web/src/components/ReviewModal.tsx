@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { useReviewContext } from "@/hooks/useReviewContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -135,34 +135,12 @@ export function ReviewModal() {
     }
   };
 
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
-  const ROW_HEIGHT = 36;
-  const OVERSCAN = 8;
-
-  useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const update = () => setViewportHeight(el.clientHeight);
-    update();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => update());
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  const totalRows = filteredReviewRows.length;
-  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const endIndex = Math.min(totalRows, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN);
-  const visibleRows = filteredReviewRows.slice(startIndex, endIndex);
-  const offsetY = startIndex * ROW_HEIGHT;
   if (!reviewOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-background">
       <div className="fixed inset-0 flex">
-        <div className="w-full h-full bg-background overflow-hidden flex flex-col">
+        <div className="w-full h-full bg-background overflow-hidden flex flex-col min-h-0">
           <div className="p-3 border-b flex items-center gap-2">
             <div className="font-semibold">人工复核</div>
             <Badge variant="outline" className="h-6 text-[10px] font-mono">待复核 {reviewPendingCount}</Badge>
@@ -182,9 +160,9 @@ export function ReviewModal() {
             </div>
           </div>
 
-          <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 flex overflow-hidden min-h-0">
             {/* Left: list */}
-            <div className="w-[56%] border-r flex flex-col overflow-hidden">
+            <div className="w-[56%] border-r flex flex-col overflow-hidden min-h-0">
               <div className="p-3 border-b space-y-2">
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2">
@@ -331,52 +309,47 @@ export function ReviewModal() {
                 ) : null}
               </div>
 
-              <div
-                ref={listRef}
-                onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-                className="flex-1 overflow-auto"
-              >
-                <div className="sticky top-0 z-10 bg-background border-b">
-                  <div className="grid grid-cols-[42px_90px_90px_1fr_1fr_150px] h-9 items-center text-xs text-muted-foreground px-2">
-                    <div className="flex items-center justify-center">
-                      <Checkbox
-                        checked={filteredReviewTxnIds.length > 0 && filteredReviewTxnIds.every((id) => Boolean(reviewSelectedTxnIds[id]))}
-                        onCheckedChange={(chk: boolean | string) => {
-                          const on = chk === true;
-                          setReviewSelectedTxnIds((prev) => {
-                            const next: Record<string, boolean> = { ...prev };
-                            if (on) {
-                              for (const id of filteredReviewTxnIds) next[id] = true;
-                            } else {
-                              for (const id of filteredReviewTxnIds) delete next[id];
-                            }
-                            return next;
-                          });
-                        }}
-                        title="全选/取消全选：当前筛选结果"
-                      />
-                    </div>
-                    <div>日期</div>
-                    <div className="text-right">金额</div>
-                    <div>商户</div>
-                    <div>商品</div>
-                    <div>建议</div>
-                  </div>
-                </div>
-
-                <div className="relative" style={{ height: totalRows * ROW_HEIGHT }}>
-                  <div style={{ transform: `translateY(${offsetY}px)` }}>
-                    {visibleRows.map((r) => {
+              <ScrollArea className="flex-1">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="h-9 text-xs w-[42px]">
+                        <Checkbox
+                          checked={filteredReviewTxnIds.length > 0 && filteredReviewTxnIds.every((id) => Boolean(reviewSelectedTxnIds[id]))}
+                          onCheckedChange={(chk: boolean | string) => {
+                            const on = chk === true;
+                            setReviewSelectedTxnIds((prev) => {
+                              const next: Record<string, boolean> = { ...prev };
+                              if (on) {
+                                for (const id of filteredReviewTxnIds) next[id] = true;
+                              } else {
+                                for (const id of filteredReviewTxnIds) delete next[id];
+                              }
+                              return next;
+                            });
+                          }}
+                          title="全选/取消全选：当前筛选结果"
+                        />
+                      </TableHead>
+                      <TableHead className="h-9 text-xs w-[90px]">日期</TableHead>
+                      <TableHead className="h-9 text-xs text-right w-[90px]">金额</TableHead>
+                      <TableHead className="h-9 text-xs">商户</TableHead>
+                      <TableHead className="h-9 text-xs">商品</TableHead>
+                      <TableHead className="h-9 text-xs w-[120px]">建议</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredReviewRows.map((r) => {
                       const pending = String(r.__pending ?? "") === "true";
                       const txnId = String(r.txn_id ?? "");
                       const rowKey = `${txnId}-${String(r.__row_idx ?? "")}`;
                       const ignored = isTxnIgnored(txnId, r);
                       const active = txnId && txnId === reviewSelectedTxnId;
                       return (
-                        <div
+                        <TableRow
                           key={rowKey}
                           className={cn(
-                            "grid grid-cols-[42px_90px_90px_1fr_1fr_150px] h-9 items-center px-2 text-xs border-b cursor-pointer",
+                            "h-9 cursor-pointer",
                             ignored && !active && "bg-muted/30",
                             pending && "bg-amber-50/40",
                             active && "bg-accent"
@@ -409,8 +382,8 @@ export function ReviewModal() {
                             setReviewSelectedTxnId(txnId);
                           }}
                         >
-                          <div
-                            className="flex items-center justify-center font-mono whitespace-nowrap select-none"
+                          <TableCell
+                            className="py-1"
                             onPointerDown={(e) => {
                               e.stopPropagation();
                               if (!txnId) return;
@@ -434,37 +407,39 @@ export function ReviewModal() {
                                 title="勾选后可批量应用分类/忽略"
                               />
                             </div>
-                          </div>
-                          <div className="font-mono whitespace-nowrap">{String(r.trade_date ?? "")}</div>
-                          <div className="font-mono whitespace-nowrap text-right">{String(r.amount ?? "")}</div>
-                          <div className="truncate max-w-[220px]" title={String(r.merchant ?? "")}>{String(r.merchant ?? "")}</div>
-                          <div className="truncate max-w-[220px]" title={String(r.item ?? "")}>{String(r.item ?? "")}</div>
-                          <div className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={String(r.suggested_category_name ?? r.suggested_category_id ?? "")}>
-                            <div className="flex items-center gap-2">
-                              <span className="truncate">{String(r.suggested_category_name ?? r.suggested_category_id ?? "")}</span>
-                              {ignored ? (
-                                <Badge variant="secondary" className="h-5 text-[10px]" title="该条已标记为不记账（低饱和提示，不计入统计）">
-                                  不记账
-                                </Badge>
-                              ) : null}
+                          </TableCell>
+                          <TableCell className="font-mono whitespace-nowrap py-1">{String(r.trade_date ?? "")}</TableCell>
+                          <TableCell className="font-mono whitespace-nowrap text-right py-1">{String(r.amount ?? "")}</TableCell>
+                          <TableCell className="truncate max-w-[220px] py-1" title={String(r.merchant ?? "")}>{String(r.merchant ?? "")}</TableCell>
+                          <TableCell className="truncate max-w-[220px] py-1" title={String(r.item ?? "")}>{String(r.item ?? "")}</TableCell>
+                          <TableCell className="py-1">
+                            <div className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={String(r.suggested_category_name ?? r.suggested_category_id ?? "")}>
+                              <div className="flex items-center gap-2">
+                                <span className="truncate">{String(r.suggested_category_name ?? r.suggested_category_id ?? "")}</span>
+                                {ignored ? (
+                                  <Badge variant="secondary" className="h-5 text-[10px]" title="该条已标记为不记账（低饱和提示，不计入统计）">
+                                    不记账
+                                  </Badge>
+                                ) : null}
+                              </div>
                             </div>
-                          </div>
-                        </div>
+                          </TableCell>
+                        </TableRow>
                       );
                     })}
-                  </div>
-                </div>
-              </div>
+                  </TableBody>
+                </Table>
+              </ScrollArea>
             </div>
 
             {/* Right: details + quick rules */}
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 flex flex-col overflow-hidden min-h-0">
               {!selectedReviewRow ? (
                 <div className="flex-1 flex items-center justify-center text-muted-foreground">
                   先加载 <span className="font-mono mx-1">review.csv</span>，再选择一条记录。
                 </div>
               ) : (
-                <ScrollArea className="flex-1">
+                <ScrollArea className="flex-1 min-h-0">
                   <div className="p-4 space-y-4">
                     <Card>
                       <CardHeader className="py-3">

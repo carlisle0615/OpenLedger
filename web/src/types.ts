@@ -20,7 +20,8 @@ export type RunState = {
     options: {
         pdf_mode?: string;
         classify_mode: "llm" | "dry_run";
-        allow_unreviewed: boolean;
+        period_mode?: "billing" | "calendar";
+        period_day?: number | null;
         period_year: number | null;
         period_month: number | null;
     };

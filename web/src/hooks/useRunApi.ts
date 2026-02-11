@@ -136,7 +136,13 @@ export function useRunApi(deps: RunApiDeps) {
 
     async function startWorkflow(stages?: string[]) {
         if (!runId) return;
-        const options = state?.options ?? { classify_mode: "llm" as const, allow_unreviewed: false, period_year: null, period_month: null };
+        const options = state?.options ?? {
+            classify_mode: "llm" as const,
+            period_mode: "billing",
+            period_day: 20,
+            period_year: null,
+            period_month: null,
+        };
         const stageIds = stages ?? state?.stages?.map((s) => s.id) ?? [];
         const includesClassify = !stages || stageIds.some((id) => id.includes("classify"));
         if (includesClassify && options.classify_mode === "llm") {
@@ -315,21 +321,6 @@ export function useRunApi(deps: RunApiDeps) {
         }
     }
 
-    async function onAllowUnreviewedChange(next: boolean) {
-        if (!runId) return;
-        if (next) {
-            const ok = await confirm({
-                title: "确认允许跳过人工复核？",
-                description: "开启后将直接产出最终结果，可能遗漏分类错误。",
-                confirmText: "仍然开启",
-                cancelText: "取消",
-                tone: "danger",
-            });
-            if (!ok) return;
-        }
-        await saveOptions({ allow_unreviewed: next });
-    }
-
     // ---- 副作用 ----
 
     // 初始连接检测
@@ -397,7 +388,6 @@ export function useRunApi(deps: RunApiDeps) {
         saveConfig,
         saveConfigObject,
         saveOptions,
-        onAllowUnreviewedChange,
         runStatus,
     };
 }

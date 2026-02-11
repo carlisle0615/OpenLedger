@@ -16,9 +16,10 @@
 
 from __future__ import annotations
 
+import calendar
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -522,6 +523,8 @@ def main() -> None:
     parser.add_argument("--alipay", type=Path, default=Path("output/alipay.normalized.csv"))
     parser.add_argument("--period-year", type=int, default=None)
     parser.add_argument("--period-month", type=int, default=None)
+    parser.add_argument("--period-day", type=int, default=20)
+    parser.add_argument("--period-mode", type=str, default="billing")
     args = parser.parse_args()
 
     period: Period | None = None
@@ -531,10 +534,26 @@ def main() -> None:
         month = int(args.period_month)
         if not (1 <= month <= 12):
             raise SystemExit("--period-month 必须在 1~12 之间")
-        start_year, start_month = (year - 1, 12) if month == 1 else (year, month - 1)
-        start_date = date(start_year, start_month, 21)
-        end_date = date(year, month, 20)
-        period = Period(start_date=start_date, end_date=end_date, label=f"{year:04d}-{month:02d}")
+        mode = str(args.period_mode or "billing").strip().lower()
+        day = int(args.period_day or 20)
+        if not (1 <= day <= 31):
+            raise SystemExit("--period-day 必须在 1~31 之间")
+        if mode == "calendar":
+            last_day = calendar.monthrange(year, month)[1]
+            start_date = date(year, month, 1)
+            end_date = date(year, month, last_day)
+            label = f"{year:04d}-{month:02d} 自然月"
+        else:
+            start_year, start_month = (year - 1, 12) if month == 1 else (year, month - 1)
+            prev_last_day = calendar.monthrange(start_year, start_month)[1]
+            end_last_day = calendar.monthrange(year, month)[1]
+            prev_end_day = min(day, prev_last_day)
+            end_day = min(day, end_last_day)
+            prev_end_date = date(start_year, start_month, prev_end_day)
+            start_date = prev_end_date + timedelta(days=1)
+            end_date = date(year, month, end_day)
+            label = f"{year:04d}-{month:02d} 信用卡账期({day}日)"
+        period = Period(start_date=start_date, end_date=end_date, label=label)
 
     build_unified(
         cc_enriched_path=args.cc_enriched,

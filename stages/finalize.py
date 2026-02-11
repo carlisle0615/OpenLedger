@@ -262,7 +262,6 @@ def main() -> None:
     parser.add_argument("--review", type=Path, default=Path("output/classify/review.csv"))
     parser.add_argument("--out-dir", type=Path, default=Path("output"))
     parser.add_argument("--drop-cols", type=str, default="")
-    parser.add_argument("--allow-unreviewed", action="store_true")
     args = parser.parse_args()
 
     drop_cols = [c.strip() for c in args.drop_cols.split(",") if c.strip()]
@@ -272,7 +271,7 @@ def main() -> None:
         review_csv=args.review,
         out_dir=args.out_dir,
         drop_cols=drop_cols,
-        require_review=not args.allow_unreviewed,
+        require_review=True,
     )
 
 

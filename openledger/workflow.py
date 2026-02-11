@@ -62,7 +62,8 @@ def get_state(paths: Paths) -> dict[str, Any]:
         opts = {}
     opts.setdefault("pdf_mode", "auto")
     opts.setdefault("classify_mode", "llm")
-    opts.setdefault("allow_unreviewed", False)
+    opts.setdefault("period_mode", "billing")
+    opts.setdefault("period_day", 20)
     opts.setdefault("period_year", None)
     opts.setdefault("period_month", None)
     state["options"] = opts
@@ -606,7 +607,18 @@ class WorkflowRunner:
             period_year = options.get("period_year")
             period_month = options.get("period_month")
             if period_year and period_month:
-                cmd.extend(["--period-year", str(period_year), "--period-month", str(period_month)])
+                period_mode = options.get("period_mode") or "billing"
+                period_day = options.get("period_day") or 20
+                cmd.extend([
+                    "--period-year",
+                    str(period_year),
+                    "--period-month",
+                    str(period_month),
+                    "--period-day",
+                    str(period_day),
+                    "--period-mode",
+                    str(period_mode),
+                ])
             st_logger.info(f"日志文件: {log_path}")
             return _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
 
@@ -649,8 +661,6 @@ class WorkflowRunner:
                 "--out-dir",
                 str(paths.out_dir),
             ]
-            if options.get("allow_unreviewed"):
-                cmd.append("--allow-unreviewed")
             st_logger.info(f"日志文件: {log_path}")
             return _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
 

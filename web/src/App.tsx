@@ -35,7 +35,7 @@ export default function App() {
     refreshRuns, onCreateRun, onUpload, downloadHref,
     startWorkflow, cancelRun, resetClassify,
     loadCsv, selectFile, saveConfig, saveConfigObject,
-    saveOptions, onAllowUnreviewedChange, runStatus,
+    saveOptions, runStatus,
   } = runApi;
 
   const reviewActions = useReviewActions({
@@ -69,6 +69,7 @@ export default function App() {
   );
   const showConfigPanel = Boolean(runId);
   const showUploadCard = Boolean(runId) && !(state?.inputs?.length ?? 0);
+  const showSettingsCard = Boolean(state?.stages?.length);
 
   return (
     <div className="min-h-screen bg-background text-foreground p-4 font-sans antialiased">
@@ -85,19 +86,7 @@ export default function App() {
 
         {error && <div className="text-sm text-destructive flex items-center gap-2 p-2 border border-destructive/20 bg-destructive/10 rounded-md"><AlertCircle className="h-4 w-4" /> {error}</div>}
 
-        {!runId ? (
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-base">快速开始</CardTitle>
-            </CardHeader>
-            <CardContent className="py-3 text-sm text-muted-foreground space-y-1">
-              <div>1. 设置后端地址并测试连接</div>
-              <div>2. 新建任务</div>
-              <div>3. 上传 PDF/CSV/XLSX 文件</div>
-              <div>4. 运行流程</div>
-            </CardContent>
-          </Card>
-        ) : !state?.inputs?.length ? (
+        {runId && !state?.inputs?.length ? (
           <Card>
             <CardHeader className="py-3">
               <CardTitle className="text-base">下一步</CardTitle>
@@ -145,15 +134,16 @@ export default function App() {
               />
             ) : null}
 
-            <div className="mt-auto">
-              <SettingsCard
-                state={state}
-                pdfModes={pdfModes}
-                busy={busy}
-                saveOptions={saveOptions}
-                onAllowUnreviewedChange={onAllowUnreviewedChange}
-              />
-            </div>
+            {showSettingsCard ? (
+              <div className="mt-auto">
+                <SettingsCard
+                  state={state}
+                  pdfModes={pdfModes}
+                  busy={busy}
+                  saveOptions={saveOptions}
+                />
+              </div>
+            ) : null}
           </div>
 
           <div className="lg:col-span-8 space-y-6">

@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { PdfMode, RunState } from "@/types";
 
@@ -10,11 +11,37 @@ interface SettingsCardProps {
   pdfModes: PdfMode[];
   busy: boolean;
   saveOptions: (updates: Partial<any>) => void;
-  onAllowUnreviewedChange: (next: boolean) => void;
 }
 
-export function SettingsCard({ state, pdfModes, busy, saveOptions, onAllowUnreviewedChange }: SettingsCardProps) {
+export function SettingsCard({ state, pdfModes, busy, saveOptions }: SettingsCardProps) {
   const modes = pdfModes?.length ? pdfModes : [{ id: "auto", name: "自动识别（推荐）" }];
+  const periodMode = state?.options?.period_mode ?? "billing";
+  const periodDay = state?.options?.period_day ?? 20;
+  const [customDay, setCustomDay] = useState(String(periodDay));
+  const presetDays = useMemo(() => [5, 10, 15, 20, 25], []);
+
+  useEffect(() => {
+    setCustomDay(String(periodDay));
+  }, [periodDay]);
+
+  const applyCustomDay = () => {
+    const raw = customDay.trim();
+    if (!raw) return;
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return;
+    const day = Math.min(Math.max(Math.round(num), 1), 31);
+    saveOptions({ period_day: day });
+  };
+
+  const handleCustomDayKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      applyCustomDay();
+    }
+  };
+
+  const formatDate = (y: number, m: number, d: number) => (
+    `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`
+  );
   return (
     <Card>
       <CardHeader className="py-3">
@@ -56,22 +83,58 @@ export function SettingsCard({ state, pdfModes, busy, saveOptions, onAllowUnrevi
             </SelectContent>
           </Select>
         </div>
-        <div className="flex items-center space-x-2">
-          <Checkbox
-            id="allow_unreviewed"
-            checked={Boolean(state?.options?.allow_unreviewed)}
-            onCheckedChange={(chk: boolean | string) => onAllowUnreviewedChange(chk === true)}
-            disabled={!state || busy}
-          />
-          <label htmlFor="allow_unreviewed" className="text-xs leading-none">
-            允许跳过人工复核
-          </label>
-        </div>
-        <div className="text-[11px] text-destructive">
-          开启后将跳过人工复核，可能导致分类错误无法被发现。
-        </div>
         <Separator />
         <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">账期方式</span>
+            <Select
+              value={periodMode}
+              onValueChange={(val: string) => saveOptions({ period_mode: val })}
+              disabled={!state || busy}
+            >
+              <SelectTrigger className="w-[220px] h-7 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="billing" className="text-xs">信用卡账期（上月21 ~ 本月20）</SelectItem>
+                <SelectItem value="calendar" className="text-xs">自然月（1 ~ 月末）</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {periodMode === "billing" ? (
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">账单日</span>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  {presetDays.map((d) => (
+                    <Button
+                      key={d}
+                      type="button"
+                      size="sm"
+                      variant={periodDay === d ? "default" : "outline"}
+                      className="h-7 px-2 text-xs"
+                      onClick={() => saveOptions({ period_day: d })}
+                      disabled={!state || busy}
+                    >
+                      {d}日
+                    </Button>
+                  ))}
+                </div>
+                <Input
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={customDay}
+                  onChange={(e) => setCustomDay(e.target.value)}
+                  onBlur={applyCustomDay}
+                  onKeyDown={handleCustomDayKeyDown}
+                  className="w-[84px] h-7 text-xs"
+                  placeholder="自定义"
+                  disabled={!state || busy}
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">账期</span>
             <div className="flex items-center gap-2">
@@ -131,12 +194,22 @@ export function SettingsCard({ state, pdfModes, busy, saveOptions, onAllowUnrevi
             {state?.options?.period_year && state?.options?.period_month ? (() => {
               const y = state.options.period_year!;
               const m = state.options.period_month!;
+              if (periodMode === "calendar") {
+                const lastDay = new Date(y, m, 0).getDate();
+                const start = formatDate(y, m, 1);
+                const end = formatDate(y, m, lastDay);
+                return `账期范围：${start} ~ ${end}`;
+              }
               const prevY = m === 1 ? y - 1 : y;
               const prevM = m === 1 ? 12 : m - 1;
-              const start = `${prevY}-${String(prevM).padStart(2, "0")}-21`;
-              const end = `${y}-${String(m).padStart(2, "0")}-20`;
+              const prevLastDay = new Date(prevY, prevM, 0).getDate();
+              const endDay = Math.min(periodDay, new Date(y, m, 0).getDate());
+              const prevEndDay = Math.min(periodDay, prevLastDay);
+              const startDate = new Date(prevY, prevM - 1, prevEndDay + 1);
+              const start = formatDate(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
+              const end = formatDate(y, m, endDay);
               return `账期范围：${start} ~ ${end}`;
-            })() : "未设置账期筛选（默认范围：上月21日 ~ 本月20日）"}
+            })() : "未设置账期筛选"}
           </div>
         </div>
       </CardContent>

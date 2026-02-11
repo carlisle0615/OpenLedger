@@ -73,8 +73,9 @@ def init_run_state(run_id: str) -> dict[str, Any]:
         "options": {
             "pdf_mode": "auto",  # auto（自动识别） | 解析器 id（例如 cmb）
             "classify_mode": "llm",  # llm（调用模型） | dry_run（演练，不调用模型）
-            "allow_unreviewed": False,
-            # 默认取当前年月（信用卡账期：上月 21 ~ 本月 20）。
+            # 默认取当前年月（信用卡账期：账单日 20，对应上月 21 ~ 本月 20）。
+            "period_mode": "billing",  # billing（信用卡账期）| calendar（自然月）
+            "period_day": 20,
             "period_year": now_local.year,
             "period_month": now_local.month,
         },
