@@ -1,17 +1,20 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { FileText, Download } from "lucide-react";
-import { FileItem, CsvPreview } from "@/types";
+import { FileItem, CsvPreview, PdfPreview } from "@/types";
+import { isPdfFile } from "@/utils/helpers";
 
 interface PreviewAreaProps {
   selectedFile: FileItem | null;
   runName: string;
   downloadHref: (path: string) => string;
+  pdfPageHref: (path: string, page: number, dpi?: number) => string;
   previewError: string;
   csvPreview: CsvPreview | null;
+  pdfPreview: PdfPreview | null;
   textPreview: string;
   loadCsv: (path: string, offset: number) => void;
 }
@@ -31,10 +34,23 @@ function ensureExcelExt(value: string) {
   return `${value}.xlsx`;
 }
 
-export function PreviewArea({ selectedFile, runName, downloadHref, previewError, csvPreview, textPreview, loadCsv }: PreviewAreaProps) {
+export function PreviewArea({ selectedFile, runName, downloadHref, pdfPageHref, previewError, csvPreview, pdfPreview, textPreview, loadCsv }: PreviewAreaProps) {
   const isFinalReport = selectedFile?.name === "unified.transactions.categorized.xlsx";
   const safeRunName = sanitizeFilename(runName || "");
   const downloadName = isFinalReport && safeRunName ? ensureExcelExt(safeRunName) : undefined;
+  const isPdf = useMemo(() => Boolean(selectedFile && isPdfFile(selectedFile.name)), [selectedFile]);
+  const [pdfPage, setPdfPage] = useState(1);
+
+  useEffect(() => {
+    setPdfPage(1);
+  }, [selectedFile?.path]);
+
+  const pageCount = pdfPreview?.page_count ?? 0;
+  const thumbPages = useMemo(() => {
+    if (!pageCount) return [];
+    const max = Math.min(3, pageCount);
+    return Array.from({ length: max }, (_, i) => i + 1);
+  }, [pageCount]);
   return (
     <Card className="min-h-[600px] flex flex-col h-[calc(100vh-250px)]">
       <CardHeader className="py-3 border-b bg-muted/20">
@@ -66,6 +82,49 @@ export function PreviewArea({ selectedFile, runName, downloadHref, previewError,
           <div className="absolute inset-0 overflow-auto">
             {previewError && <div className="p-4 text-destructive text-sm">{previewError}</div>}
 
+            {isPdf && pdfPreview && (
+              <div className="p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" disabled={pdfPage <= 1} onClick={() => setPdfPage((p) => Math.max(1, p - 1))}>上一页</Button>
+                  <Button variant="outline" size="sm" disabled={pageCount === 0 || pdfPage >= pageCount} onClick={() => setPdfPage((p) => Math.min(pageCount, p + 1))}>下一页</Button>
+                  <span className="text-xs text-muted-foreground ml-auto">
+                    第 {pdfPage} / {pageCount} 页
+                  </span>
+                </div>
+                <div className="border rounded-md overflow-hidden bg-muted/10">
+                  <img
+                    src={pdfPageHref(selectedFile!.path, pdfPage, 150)}
+                    alt={`page-${pdfPage}`}
+                    className="w-full h-auto block"
+                    loading="lazy"
+                  />
+                </div>
+                {thumbPages.length ? (
+                  <div className="flex items-center gap-2">
+                    {thumbPages.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setPdfPage(p)}
+                        className={`border rounded-md overflow-hidden ${p === pdfPage ? "ring-2 ring-primary" : "opacity-80 hover:opacity-100"}`}
+                        title={`第 ${p} 页`}
+                      >
+                        <img
+                          src={pdfPageHref(selectedFile!.path, p, 90)}
+                          alt={`thumb-${p}`}
+                          className="h-24 w-auto block"
+                          loading="lazy"
+                        />
+                      </button>
+                    ))}
+                    {pageCount > thumbPages.length ? (
+                      <span className="text-[11px] text-muted-foreground ml-2">仅显示前 {thumbPages.length} 页缩略图</span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            )}
+
             {csvPreview && (
               <div className="p-4">
                 <div className="flex gap-2 mb-2">
@@ -94,7 +153,7 @@ export function PreviewArea({ selectedFile, runName, downloadHref, previewError,
               </div>
             )}
 
-            {!csvPreview && textPreview && (
+            {!csvPreview && !pdfPreview && textPreview && (
               <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{textPreview}</pre>
             )}
           </div>

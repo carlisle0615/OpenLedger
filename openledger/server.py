@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import mimetypes
 import os
@@ -29,6 +31,7 @@ from .workflow import (
     save_state,
 )
 
+_PDF_RENDER_LOCK = threading.Lock()
 
 def _read_request_body(handler: BaseHTTPRequestHandler) -> bytes:
     length = int(handler.headers.get("Content-Length", "0") or "0")
@@ -50,23 +53,69 @@ def _send_json(handler: BaseHTTPRequestHandler, status: int, obj: Any) -> None:
 def _set_cors(handler: BaseHTTPRequestHandler) -> None:
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS")
-    handler.send_header(
-        "Access-Control-Allow-Headers", "Content-Type, Authorization, X-OpenLedger-Token"
-    )
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type")
 
 
-def _is_authorized(handler: BaseHTTPRequestHandler, api_token: str | None) -> bool:
-    if not api_token:
-        return True
-    provided = handler.headers.get("X-OpenLedger-Token", "").strip()
-    if not provided:
-        auth = handler.headers.get("Authorization", "").strip()
-        if auth.lower().startswith("bearer "):
-            provided = auth.split(" ", 1)[1].strip()
-    if provided == api_token:
-        return True
-    _send_json(handler, 401, {"error": "unauthorized"})
-    return False
+def _preview_cache_path(run_dir: Path, rel_path: str, mtime: float, page: int, dpi: int) -> Path:
+    key = f"{rel_path}|{mtime:.3f}|{page}|{dpi}".encode("utf-8")
+    digest = hashlib.sha1(key).hexdigest()[:16]
+    cache_dir = run_dir / "preview"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"pdf_{digest}_p{page}_d{dpi}.png"
+
+
+def _preview_xlsx(file_path: Path, limit: int, offset: int) -> dict[str, Any]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        rows_iter = ws.iter_rows(values_only=True)
+        header = next(rows_iter, None)
+        if header is None:
+            return {
+                "columns": [],
+                "rows": [],
+                "offset": offset,
+                "limit": limit,
+                "has_more": False,
+                "next_offset": None,
+                "prev_offset": max(offset - limit, 0) if offset > 0 else None,
+            }
+        columns: list[str] = []
+        for i, h in enumerate(header):
+            if h is None or str(h).strip() == "":
+                columns.append(f"col_{i + 1}")
+            else:
+                columns.append(str(h))
+
+        rows: list[dict[str, Any]] = []
+        has_more = False
+        seen = 0
+        for row in rows_iter:
+            if seen < offset:
+                seen += 1
+                continue
+            if len(rows) >= limit:
+                has_more = True
+                break
+            out: dict[str, Any] = {}
+            for i, col in enumerate(columns):
+                val = row[i] if i < len(row) else None
+                out[col] = "" if val is None else str(val)
+            rows.append(out)
+            seen += 1
+        return {
+            "columns": columns,
+            "rows": rows,
+            "offset": offset,
+            "limit": limit,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+            "prev_offset": max(offset - limit, 0) if offset > 0 else None,
+        }
+    finally:
+        wb.close()
 
 
 def _parse_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -254,33 +303,18 @@ def make_handler(server: WorkflowHTTPServer):
 
         def do_GET(self) -> None:  # noqa: N802
             try:
-                parsed = urllib.parse.urlparse(self.path)
-                if parsed.path.startswith("/api/") and not _is_authorized(
-                    self, server.settings.api_token
-                ):
-                    return
                 self._handle_get()
             except Exception as exc:
                 _send_json(self, 500, {"error": str(exc)})
 
         def do_POST(self) -> None:  # noqa: N802
             try:
-                parsed = urllib.parse.urlparse(self.path)
-                if parsed.path.startswith("/api/") and not _is_authorized(
-                    self, server.settings.api_token
-                ):
-                    return
                 self._handle_post()
             except Exception as exc:
                 _send_json(self, 500, {"error": str(exc)})
 
         def do_PUT(self) -> None:  # noqa: N802
             try:
-                parsed = urllib.parse.urlparse(self.path)
-                if parsed.path.startswith("/api/") and not _is_authorized(
-                    self, server.settings.api_token
-                ):
-                    return
                 self._handle_put()
             except Exception as exc:
                 _send_json(self, 500, {"error": str(exc)})
@@ -382,38 +416,45 @@ def make_handler(server: WorkflowHTTPServer):
                 if not file_path.exists() or not file_path.is_file():
                     _send_json(self, 404, {"error": "not found"})
                     return
-                if file_path.suffix.lower() != ".csv":
-                    _send_json(self, 400, {"error": "preview supports csv only"})
+                suffix = file_path.suffix.lower()
+                if suffix == ".csv":
+                    rows: list[dict[str, Any]] = []
+                    columns: list[str] = []
+                    has_more = False
+                    with file_path.open("r", encoding="utf-8", newline="") as f:
+                        reader = csv.DictReader(f)
+                        columns = list(reader.fieldnames or [])
+                        seen = 0
+                        for r in reader:
+                            if seen < offset:
+                                seen += 1
+                                continue
+                            if len(rows) >= limit:
+                                has_more = True
+                                break
+                            rows.append(r)
+                    _send_json(
+                        self,
+                        200,
+                        {
+                            "columns": columns,
+                            "rows": rows,
+                            "offset": offset,
+                            "limit": limit,
+                            "has_more": has_more,
+                            "next_offset": offset + limit if has_more else None,
+                            "prev_offset": max(offset - limit, 0) if offset > 0 else None,
+                        },
+                    )
                     return
-
-                rows: list[dict[str, Any]] = []
-                columns: list[str] = []
-                has_more = False
-                with file_path.open("r", encoding="utf-8", newline="") as f:
-                    reader = csv.DictReader(f)
-                    columns = list(reader.fieldnames or [])
-                    seen = 0
-                    for r in reader:
-                        if seen < offset:
-                            seen += 1
-                            continue
-                        if len(rows) >= limit:
-                            has_more = True
-                            break
-                        rows.append(r)
-                _send_json(
-                    self,
-                    200,
-                    {
-                        "columns": columns,
-                        "rows": rows,
-                        "offset": offset,
-                        "limit": limit,
-                        "has_more": has_more,
-                        "next_offset": offset + limit if has_more else None,
-                        "prev_offset": max(offset - limit, 0) if offset > 0 else None,
-                    },
-                )
+                if suffix in {".xlsx", ".xls"}:
+                    if suffix == ".xls":
+                        _send_json(self, 400, {"error": "preview supports xlsx only"})
+                        return
+                    data = _preview_xlsx(file_path, limit=limit, offset=offset)
+                    _send_json(self, 200, data)
+                    return
+                _send_json(self, 400, {"error": "preview supports csv/xlsx only"})
                 return
 
             m = re.fullmatch(
@@ -453,10 +494,83 @@ def make_handler(server: WorkflowHTTPServer):
                 )
                 return
 
-            # 静态前端（可选）：如果 web/dist 存在则直接托管。
-            dist = root / "web" / "dist"
-            if dist.exists():
-                self._serve_static(dist, path)
+            m = re.fullmatch(
+                r"/api/runs/(?P<run_id>[^/]+)/preview/pdf/meta", path
+            )
+            if m:
+                from pypdf import PdfReader
+
+                run_id = m.group("run_id")
+                rel = (qs.get("path") or [""])[0]
+                if not rel:
+                    _send_json(self, 400, {"error": "missing path"})
+                    return
+                paths = make_paths(root, run_id)
+                file_path = resolve_under_root(paths.run_dir, rel)
+                if not file_path.exists() or not file_path.is_file():
+                    _send_json(self, 404, {"error": "not found"})
+                    return
+                if file_path.suffix.lower() != ".pdf":
+                    _send_json(self, 400, {"error": "preview supports pdf only"})
+                    return
+                reader = PdfReader(str(file_path))
+                page_count = len(reader.pages)
+                _send_json(self, 200, {"page_count": page_count})
+                return
+
+            m = re.fullmatch(
+                r"/api/runs/(?P<run_id>[^/]+)/preview/pdf/page", path
+            )
+            if m:
+                import pdfplumber
+
+                run_id = m.group("run_id")
+                rel = (qs.get("path") or [""])[0]
+                page = int((qs.get("page") or ["1"])[0])
+                dpi = int((qs.get("dpi") or ["120"])[0])
+                if not rel:
+                    _send_json(self, 400, {"error": "missing path"})
+                    return
+                if dpi < 72:
+                    dpi = 72
+                if dpi > 200:
+                    dpi = 200
+                paths = make_paths(root, run_id)
+                file_path = resolve_under_root(paths.run_dir, rel)
+                if not file_path.exists() or not file_path.is_file():
+                    _send_json(self, 404, {"error": "not found"})
+                    return
+                if file_path.suffix.lower() != ".pdf":
+                    _send_json(self, 400, {"error": "preview supports pdf only"})
+                    return
+                if page < 1:
+                    _send_json(self, 400, {"error": "page must be >= 1"})
+                    return
+                try:
+                    mtime = file_path.stat().st_mtime
+                    cache_path = _preview_cache_path(paths.run_dir, rel, mtime, page, dpi)
+                    with _PDF_RENDER_LOCK:
+                        if cache_path.exists():
+                            data = cache_path.read_bytes()
+                        else:
+                            with pdfplumber.open(file_path) as pdf:
+                                if page > len(pdf.pages):
+                                    _send_json(self, 400, {"error": "page out of range"})
+                                    return
+                                img = pdf.pages[page - 1].to_image(resolution=dpi).original
+                                buf = io.BytesIO()
+                                img.save(buf, format="PNG")
+                                data = buf.getvalue()
+                            cache_path.write_bytes(data)
+                except Exception as exc:
+                    _send_json(self, 500, {"error": f"pdf render failed: {exc}"})
+                    return
+                self.send_response(200)
+                _set_cors(self)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
                 return
 
             self.send_response(200)
@@ -467,38 +581,10 @@ def make_handler(server: WorkflowHTTPServer):
                 (
                     "<html><body>"
                     "<h3>OpenLedger server is running.</h3>"
-                    "<p>Frontend not built yet. If you use the React UI, run <code>pnpm install</code> and <code>pnpm dev</code> under <code>web/</code>.</p>"
+                    "<p>Frontend is not served by this backend. Run <code>pnpm install</code> and <code>pnpm dev</code> under <code>web/</code>.</p>"
                     "</body></html>"
                 ).encode("utf-8")
             )
-
-        def _serve_static(self, dist: Path, url_path: str) -> None:
-            rel = url_path.lstrip("/")
-            if not rel:
-                rel = "index.html"
-            target = (dist / rel).resolve()
-            try:
-                target.relative_to(dist.resolve())
-            except Exception:
-                self.send_response(404)
-                self.end_headers()
-                return
-            if target.is_dir():
-                target = target / "index.html"
-            if not target.exists():
-                # SPA 路由兜底（让前端自己处理路径）。
-                target = dist / "index.html"
-            data = target.read_bytes()
-            mime, _ = mimetypes.guess_type(target.name)
-            mime = mime or "application/octet-stream"
-            self.send_response(200)
-            _set_cors(self)
-            self.send_header("Content-Type", mime)
-            self.send_header("Content-Length", str(len(data)))
-            # 避免本地重建后 UI 被浏览器缓存导致不刷新。
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(data)
 
         def _handle_post(self) -> None:
             parsed = urllib.parse.urlparse(self.path)

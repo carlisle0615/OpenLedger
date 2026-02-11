@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { ClassifierConfig, CsvPreview, FileItem, PdfMode, RunState } from "@/types";
-import { api, fmtStatus, isCsvFile, isTextFile, type RunMeta } from "@/utils/helpers";
+import { ClassifierConfig, CsvPreview, FileItem, PdfMode, PdfPreview, RunState } from "@/types";
+import { api, fmtStatus, isCsvFile, isExcelFile, isPdfFile, isTextFile, type RunMeta } from "@/utils/helpers";
 
 /** useRunApi 的依赖参数类型 */
 export interface RunApiDeps {
     baseUrl: string;
-    apiToken: string;
     runId: string;
     state: RunState | null;
     csvLimit: number;
@@ -27,6 +26,7 @@ export interface RunApiDeps {
     setState: React.Dispatch<React.SetStateAction<RunState | null>>;
     setSelectedFile: (v: FileItem | null) => void;
     setCsvPreview: (v: CsvPreview | null) => void;
+    setPdfPreview: (v: PdfPreview | null) => void;
     setTextPreview: (v: string) => void;
     setPreviewError: (v: string) => void;
     setConfig: (v: ClassifierConfig | null) => void;
@@ -43,7 +43,7 @@ export function useRunApi(deps: RunApiDeps) {
         lastOptionEdit, confirm,
         setRuns, setRunsMeta, setRunId, setBackendStatus, setBackendError,
         setPdfModes, setNewRunName,
-        setState, setSelectedFile, setCsvPreview, setTextPreview, setPreviewError,
+        setState, setSelectedFile, setCsvPreview, setPdfPreview, setTextPreview, setPreviewError,
         setConfig, setConfigText,
         setBusy, setError, setSelectedStageId,
     } = deps;
@@ -76,6 +76,7 @@ export function useRunApi(deps: RunApiDeps) {
         setState(s);
         setSelectedFile(null);
         setCsvPreview(null);
+        setPdfPreview(null);
         setTextPreview("");
         setPreviewError("");
         try {
@@ -132,6 +133,17 @@ export function useRunApi(deps: RunApiDeps) {
 
     function downloadHref(relPath: string) {
         return `${baseUrl}/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(relPath)}`;
+    }
+
+    function pdfPageHref(relPath: string, page: number, dpi = 120) {
+        return `${baseUrl}/api/runs/${encodeURIComponent(runId)}/preview/pdf/page?path=${encodeURIComponent(relPath)}&page=${encodeURIComponent(String(page))}&dpi=${encodeURIComponent(String(dpi))}`;
+    }
+
+    async function loadPdfMeta(relPath: string) {
+        return api<PdfPreview>(
+            baseUrl,
+            `/api/runs/${encodeURIComponent(runId)}/preview/pdf/meta?path=${encodeURIComponent(relPath)}`,
+        );
     }
 
     async function startWorkflow(stages?: string[]) {
@@ -230,12 +242,22 @@ export function useRunApi(deps: RunApiDeps) {
         if (!file.exists) return;
         setSelectedFile(file);
         setCsvPreview(null);
+        setPdfPreview(null);
         setTextPreview("");
         setPreviewError("");
 
         if (!runId) return;
-        if (isCsvFile(file.name)) {
+        if (isCsvFile(file.name) || isExcelFile(file.name)) {
             await loadCsv(file.path, 0);
+            return;
+        }
+        if (isPdfFile(file.name)) {
+            try {
+                const meta = await loadPdfMeta(file.path);
+                setPdfPreview(meta);
+            } catch (e) {
+                setPreviewError(String(e));
+            }
             return;
         }
         if (isTextFile(file.name)) {
@@ -334,7 +356,7 @@ export function useRunApi(deps: RunApiDeps) {
             refreshRuns({ silentError: true }).catch(() => { });
         }, 500);
         return () => window.clearTimeout(timer);
-    }, [baseUrl, deps.apiToken]);
+    }, [baseUrl]);
 
     // 加载 PDF 解析模式
     useEffect(() => {
@@ -380,6 +402,7 @@ export function useRunApi(deps: RunApiDeps) {
         onCreateRun,
         onUpload,
         downloadHref,
+        pdfPageHref,
         startWorkflow,
         cancelRun,
         resetClassify,

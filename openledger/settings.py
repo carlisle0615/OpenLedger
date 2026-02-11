@@ -41,7 +41,6 @@ class Settings:
     open_browser: bool
     log_level: str
     max_upload_bytes: int
-    api_token: str | None
 
 
 def load_settings() -> Settings:
@@ -58,13 +57,10 @@ def load_settings() -> Settings:
         max_upload_mb = 50
     max_upload_bytes = max_upload_mb * 1024 * 1024
 
-    api_token = _env("OPENLEDGER_API_TOKEN", None)
-
     return Settings(
         host=host,
         port=port,
         open_browser=open_browser,
         log_level=log_level,
         max_upload_bytes=max_upload_bytes,
-        api_token=api_token,
     )

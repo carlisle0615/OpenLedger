@@ -14,9 +14,7 @@ export function fmtStatus(s: string) {
 
 // API 请求封装
 export async function api<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
-    const token = localStorage.getItem("openledger_apiToken") || "";
     const headers = new Headers(init?.headers || undefined);
-    if (token.trim()) headers.set("X-OpenLedger-Token", token.trim());
     const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
     if (!res.ok) {
         const txt = await res.text();
@@ -28,6 +26,15 @@ export async function api<T>(baseUrl: string, path: string, init?: RequestInit):
 // 文件类型判断
 export function isCsvFile(name: string) {
     return name.toLowerCase().endsWith(".csv");
+}
+
+export function isExcelFile(name: string) {
+    const lower = name.toLowerCase();
+    return lower.endsWith(".xlsx") || lower.endsWith(".xls");
+}
+
+export function isPdfFile(name: string) {
+    return name.toLowerCase().endsWith(".pdf");
 }
 
 export function isTextFile(name: string) {

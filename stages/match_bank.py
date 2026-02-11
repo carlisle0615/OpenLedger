@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -104,6 +105,75 @@ def _build_detail_df(wechat_path: Path, alipay_path: Path) -> pd.DataFrame:
     return details.reset_index(drop=True)
 
 
+def _calc_confidence(date_diff: int, dir_penalty: int, sim: int, max_day_diff: int, parts: int = 1) -> float:
+    day_span = max(1, max_day_diff + 1)
+    date_score = max(0.0, 1.0 - (date_diff / day_span))
+    dir_score = 1.0 if dir_penalty <= 0 else max(0.0, 1.0 - 0.35 * dir_penalty)
+    text_score = max(0.0, min(sim, 100) / 100)
+    base = 0.45 * date_score + 0.35 * text_score + 0.2 * dir_score
+    if parts > 1:
+        base *= max(0.55, 1.0 - 0.12 * (parts - 1))
+    return round(min(max(base, 0.0), 1.0), 3)
+
+
+def _join_detail_values(values: list[Any]) -> str:
+    out: list[str] = []
+    seen = set()
+    for v in values:
+        s = str(v or "").strip()
+        if not s:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return " | ".join(out)
+
+
+def _best_sum_match(
+    candidates: pd.DataFrame,
+    used_detail_idx: set[int],
+    amount_abs: Decimal,
+    bank_text: str,
+    is_refund: bool,
+    bank_amount: Decimal,
+    base_date: date,
+    max_day_diff: int,
+    max_parts: int = 3,
+) -> tuple[list[pd.Series], tuple[int, int, int]] | None:
+    available = candidates[~candidates.index.isin(used_detail_idx)]
+    if available.empty:
+        return None
+    rows = list(available.iterrows())
+    if len(rows) > 30:
+        return None
+
+    best_combo: list[pd.Series] | None = None
+    best_score: tuple[int, int, int] | None = None
+    for k in range(2, max_parts + 1):
+        for combo in itertools.combinations(rows, k):
+            total = sum((row["amount_abs"] for _, row in combo), Decimal(0))
+            if total != amount_abs:
+                continue
+            date_diff = min(abs((row["trans_date_dt"] - base_date).days) for _, row in combo)
+            dir_penalty = max(
+                _direction_penalty(is_refund=is_refund, bank_amount=bank_amount, detail_row=row)
+                for _, row in combo
+            )
+            text = " ".join((row.get("text", "") or "") for _, row in combo).strip()
+            sim = fuzz.partial_ratio(bank_text, text) if text else 0
+            score = (date_diff, dir_penalty, -sim)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_combo = [row for _, row in combo]
+    if best_combo is None or best_score is None:
+        return None
+    for row in best_combo:
+        if int(row.name) in used_detail_idx:
+            return None
+    return best_combo, best_score
+
+
 def _should_attempt_match(summary: str, counterparty: str) -> bool:
     s = summary.strip()
     c = counterparty.strip()
@@ -156,8 +226,13 @@ def match_bank_statements(
                 & (details["amount_abs"] == amount_abs)
                 & (details["trans_date_dt"].isin(date_set))
             ]
+            candidates_sum = details[
+                (details["debit_last4"] == account_last4)
+                & (details["amount_abs"] <= amount_abs)
+                & (details["trans_date_dt"].isin(date_set))
+            ]
 
-            if candidates.empty:
+            if candidates.empty and candidates_sum.empty:
                 unmatched_rows.append({**base, "match_status": "no_candidate"})
                 continue
 
@@ -166,6 +241,9 @@ def match_bank_statements(
 
             best_idx: int | None = None
             best_score: tuple[int, int, int] | None = None
+            match_method = ""
+            chosen_rows: list[pd.Series] | None = None
+
             for cand_idx, cand_row in candidates.iterrows():
                 if cand_idx in used_detail_idx:
                     continue
@@ -177,34 +255,70 @@ def match_bank_statements(
                     best_score = score
                     best_idx = int(cand_idx)
 
-            if best_idx is None:
+            if best_idx is not None:
+                used_detail_idx.add(best_idx)
+                chosen_rows = [details.loc[best_idx]]
+                match_method = "exact"
+            else:
+                sum_hit = _best_sum_match(
+                    candidates_sum,
+                    used_detail_idx,
+                    amount_abs=amount_abs,
+                    bank_text=bank_text,
+                    is_refund=is_refund,
+                    bank_amount=row["amount_dec"],
+                    base_date=base_date,
+                    max_day_diff=max_day_diff,
+                )
+                if sum_hit:
+                    chosen_rows, best_score = sum_hit
+                    for r in chosen_rows:
+                        used_detail_idx.add(int(r.name))
+                    match_method = f"sum_{len(chosen_rows)}"
+
+            if not chosen_rows:
                 unmatched_rows.append({**base, "match_status": "all_candidates_used"})
                 continue
 
-            used_detail_idx.add(best_idx)
-            chosen = details.loc[best_idx]
+            src = str(base.get("source") or "").strip() or "bank_statement"
+            channels_used = sorted({str(r.get("channel") or "") for r in chosen_rows if str(r.get("channel") or "")})
+            match_sources = f"{src}({account_last4})+{channels_used[0]}"
+            if len(channels_used) > 1:
+                match_sources = f"{src}({account_last4})+{'+'.join(channels_used)}"
+            elif match_method.startswith("sum_"):
+                match_sources = f"{src}({account_last4})+{channels_used[0]}*{len(chosen_rows)}"
+
+            sim = (-best_score[2]) if best_score else 0
+            confidence = _calc_confidence(
+                date_diff=best_score[0] if best_score else 0,
+                dir_penalty=best_score[1] if best_score else 0,
+                sim=sim,
+                max_day_diff=max_day_diff,
+                parts=len(chosen_rows),
+            )
 
             out = dict(base)
-            src = str(base.get("source") or "").strip() or "bank_statement"
             out.update(
                 {
                     "match_status": "matched",
-                    "match_sources": f"{src}({account_last4})+{chosen['channel']}",
-                    "detail_channel": chosen["channel"],
-                    "detail_trans_time": chosen["trans_time"],
-                    "detail_trans_date": chosen["trans_date"],
-                    "detail_direction": chosen["direction"],
-                    "detail_counterparty": chosen["counterparty"],
-                    "detail_item": chosen["item"],
-                    "detail_pay_method": chosen["pay_method"],
-                    "detail_trade_no": chosen["trade_no"],
-                    "detail_merchant_no": chosen["merchant_no"],
-                    "detail_status": chosen["status"],
-                    "detail_category_or_type": chosen["category_or_type"],
-                    "detail_remark": chosen["remark"],
+                    "match_method": match_method,
+                    "match_sources": match_sources,
+                    "detail_channel": _join_detail_values([r.get("channel") for r in chosen_rows]),
+                    "detail_trans_time": _join_detail_values([r.get("trans_time") for r in chosen_rows]),
+                    "detail_trans_date": _join_detail_values([r.get("trans_date") for r in chosen_rows]),
+                    "detail_direction": _join_detail_values([r.get("direction") for r in chosen_rows]),
+                    "detail_counterparty": _join_detail_values([r.get("counterparty") for r in chosen_rows]),
+                    "detail_item": _join_detail_values([r.get("item") for r in chosen_rows]),
+                    "detail_pay_method": _join_detail_values([r.get("pay_method") for r in chosen_rows]),
+                    "detail_trade_no": _join_detail_values([r.get("trade_no") for r in chosen_rows]),
+                    "detail_merchant_no": _join_detail_values([r.get("merchant_no") for r in chosen_rows]),
+                    "detail_status": _join_detail_values([r.get("status") for r in chosen_rows]),
+                    "detail_category_or_type": _join_detail_values([r.get("category_or_type") for r in chosen_rows]),
+                    "detail_remark": _join_detail_values([r.get("remark") for r in chosen_rows]),
                     "match_date_diff_days": best_score[0] if best_score else "",
                     "match_direction_penalty": best_score[1] if best_score else "",
-                    "match_text_similarity": (-best_score[2]) if best_score else "",
+                    "match_text_similarity": sim if best_score else "",
+                    "match_confidence": confidence,
                 }
             )
             enriched_rows.append(out)
@@ -227,6 +341,7 @@ def match_bank_statements(
 
     enriched_cols = base_cols + [
         "match_status",
+        "match_method",
         "match_sources",
         "detail_channel",
         "detail_trans_time",
@@ -243,8 +358,9 @@ def match_bank_statements(
         "match_date_diff_days",
         "match_direction_penalty",
         "match_text_similarity",
+        "match_confidence",
     ]
-    unmatched_cols = base_cols + ["match_status"]
+    unmatched_cols = base_cols + ["match_status", "match_method", "match_confidence"]
 
     enriched_df = pd.DataFrame(enriched_rows, columns=enriched_cols)
     unmatched_df = pd.DataFrame(unmatched_rows, columns=unmatched_cols)

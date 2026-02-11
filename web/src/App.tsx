@@ -19,9 +19,10 @@ import { ReviewModal } from "@/components/ReviewModal";
 export default function App() {
   const appState = useAppState();
   const {
-    baseUrl, apiToken, runs, runId, runsMeta,
+    baseUrl, runs, runId, runsMeta,
     backendStatus, backendError, pdfModes, newRunName, setNewRunName,
     state, selectedFile, csvPreview, textPreview, previewError,
+    pdfPreview,
     configText, setConfigText, cfgSaveToRun, setCfgSaveToRun, cfgSaveToGlobal, setCfgSaveToGlobal,
     reviewRows, reviewEdits,
     busy, error, selectedStageId, setSelectedStageId,
@@ -33,6 +34,7 @@ export default function App() {
   });
   const {
     refreshRuns, onCreateRun, onUpload, downloadHref,
+    pdfPageHref,
     startWorkflow, cancelRun, resetClassify,
     loadCsv, selectFile, saveConfig, saveConfigObject,
     saveOptions, runStatus,
@@ -74,9 +76,8 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background text-foreground p-4 font-sans antialiased">
       <div className="w-full px-4 space-y-4">
-        <HeaderBar
+          <HeaderBar
           baseUrl={baseUrl} setBaseUrl={appState.setBaseUrl}
-          apiToken={apiToken} setApiToken={appState.setApiToken}
           backendStatus={backendStatus} backendError={backendError}
           runs={runs} runId={runId} setRunId={appState.setRunId}
           runsMeta={runsMeta} newRunName={newRunName} setNewRunName={setNewRunName}
@@ -162,8 +163,10 @@ export default function App() {
               downloadHref={downloadHref}
               previewError={previewError}
               csvPreview={csvPreview}
+              pdfPreview={pdfPreview}
               textPreview={textPreview}
               loadCsv={loadCsv}
+              pdfPageHref={pdfPageHref}
             />
           </div>
         </div>

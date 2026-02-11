@@ -195,6 +195,7 @@ def _write_empty_credit_card_outputs(out_dir: Path) -> None:
     ]
     matched_extra_cols = [
         "match_status",
+        "match_method",
         "match_sources",
         "detail_channel",
         "detail_trans_time",
@@ -211,8 +212,9 @@ def _write_empty_credit_card_outputs(out_dir: Path) -> None:
         "match_date_diff_days",
         "match_direction_penalty",
         "match_text_similarity",
+        "match_confidence",
     ]
-    unmatched_extra_cols = ["match_status", "match_channels_tried"]
+    unmatched_extra_cols = ["match_status", "match_channels_tried", "match_method", "match_confidence"]
 
     _write_csv_header(out_dir / "credit_card.enriched.csv", base_cols + matched_extra_cols)
     _write_csv_header(out_dir / "credit_card.unmatched.csv", base_cols + unmatched_extra_cols)
@@ -231,6 +233,7 @@ def _write_empty_bank_outputs(out_dir: Path) -> None:
     ]
     extra_cols = [
         "match_status",
+        "match_method",
         "match_sources",
         "detail_channel",
         "detail_trans_time",
@@ -247,10 +250,11 @@ def _write_empty_bank_outputs(out_dir: Path) -> None:
         "match_date_diff_days",
         "match_direction_penalty",
         "match_text_similarity",
+        "match_confidence",
     ]
 
     _write_csv_header(out_dir / "bank.enriched.csv", base_cols + extra_cols)
-    _write_csv_header(out_dir / "bank.unmatched.csv", base_cols + ["match_status"])
+    _write_csv_header(out_dir / "bank.unmatched.csv", base_cols + ["match_status", "match_method", "match_confidence"])
 
 
 def _write_empty_export_outputs(out_dir: Path) -> None:

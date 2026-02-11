@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  openledger:
+    build: .
+    container_name: openledger
+    ports:
+      - "8000:8000"
+      - "5173:5173"
+    environment:
+      OPENLEDGER_OPEN_BROWSER: "false"
+    volumes:
+      - ./runs:/app/runs
+      - ./config:/app/config

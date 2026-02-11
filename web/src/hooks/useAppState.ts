@@ -4,6 +4,7 @@ import {
     CsvPreview,
     FileItem,
     PdfMode,
+    PdfPreview,
     RunState,
 } from "@/types";
 import { type RuleMatchMode, type RuleMatchField, type RuleAction, type RunMeta } from "@/utils/helpers";
@@ -13,7 +14,6 @@ export function useAppState() {
     const [baseUrl, setBaseUrl] = useState(
         () => localStorage.getItem("openledger_baseUrl") || "http://127.0.0.1:8000",
     );
-    const [apiToken, setApiToken] = useState(() => localStorage.getItem("openledger_apiToken") || "");
     const [runs, setRuns] = useState<string[]>([]);
     const [runId, setRunId] = useState<string>("");
     const [runsMeta, setRunsMeta] = useState<RunMeta[]>([]);
@@ -24,6 +24,7 @@ export function useAppState() {
     const [state, setState] = useState<RunState | null>(null);
     const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
     const [csvPreview, setCsvPreview] = useState<CsvPreview | null>(null);
+    const [pdfPreview, setPdfPreview] = useState<PdfPreview | null>(null);
     const [textPreview, setTextPreview] = useState<string>("");
     const [previewError, setPreviewError] = useState<string>("");
     const [csvLimit] = useState<number>(80);
@@ -68,10 +69,6 @@ export function useAppState() {
         localStorage.setItem("openledger_baseUrl", baseUrl);
     }, [baseUrl]);
 
-    useEffect(() => {
-        localStorage.setItem("openledger_apiToken", apiToken);
-    }, [apiToken]);
-
     // 复核弹窗滚动锁
     useEffect(() => {
         if (!reviewOpen) return;
@@ -84,14 +81,14 @@ export function useAppState() {
 
     return {
         // 连接
-        baseUrl, setBaseUrl, apiToken, setApiToken,
+        baseUrl, setBaseUrl,
         // 任务
         runs, setRuns, runId, setRunId, runsMeta, setRunsMeta,
         backendStatus, setBackendStatus, backendError, setBackendError,
         pdfModes, setPdfModes, newRunName, setNewRunName,
         // 运行状态
         state, setState, selectedFile, setSelectedFile,
-        csvPreview, setCsvPreview, textPreview, setTextPreview,
+        csvPreview, setCsvPreview, pdfPreview, setPdfPreview, textPreview, setTextPreview,
         previewError, setPreviewError, csvLimit,
         // 配置
         config, setConfig, configText, setConfigText,

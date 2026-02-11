@@ -1,0 +1,43 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "OpenLedger Backend",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "OPENLEDGER_OPEN_BROWSER": "false"
+      }
+    },
+    {
+      "name": "OpenLedger Frontend (pnpm dev)",
+      "type": "pwa-node",
+      "request": "launch",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "dev"
+      ],
+      "cwd": "${workspaceFolder}/web",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "OpenLedger Full Stack (shared terminal)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "zsh -lc \"uv run python main.py & (cd web && pnpm dev)\"",
+      "cwd": "${workspaceFolder}"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "OpenLedger Full Stack",
+      "configurations": [
+        "OpenLedger Backend",
+        "OpenLedger Frontend (pnpm dev)"
+      ]
+    }
+  ]
+}

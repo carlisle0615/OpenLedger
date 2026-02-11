@@ -50,3 +50,7 @@ export type CsvPreview = {
     next_offset: number | null;
     prev_offset: number | null;
 };
+
+export type PdfPreview = {
+    page_count: number;
+};

@@ -12,8 +12,6 @@ import { type RunMeta } from "@/utils/helpers";
 interface HeaderBarProps {
     baseUrl: string;
     setBaseUrl: (v: string) => void;
-    apiToken: string;
-    setApiToken: (v: string) => void;
     backendStatus: "idle" | "checking" | "ok" | "error";
     backendError: string;
     runs: string[];
@@ -30,7 +28,7 @@ interface HeaderBarProps {
 }
 
 export function HeaderBar({
-    baseUrl, setBaseUrl, apiToken, setApiToken,
+    baseUrl, setBaseUrl,
     backendStatus, backendError,
     runs, runId, setRunId, runsMeta, newRunName, setNewRunName,
     busy, runStatus, runName,
@@ -59,16 +57,6 @@ export function HeaderBar({
                         value={baseUrl}
                         onChange={(e) => setBaseUrl(e.target.value)}
                         className="w-[200px] h-8 font-mono text-xs"
-                    />
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">Token</span>
-                    <Input
-                        value={apiToken}
-                        onChange={(e) => setApiToken(e.target.value)}
-                        placeholder="（可选）"
-                        type="password"
-                        className="w-[180px] h-8 font-mono text-xs"
                     />
                 </div>
                 <div className="flex items-center gap-2">

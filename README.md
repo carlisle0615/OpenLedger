@@ -44,6 +44,16 @@ OpenLedger 采用 **File as State**：你把 PDF/CSV/XLSX 导出放进输入目�
 uv sync
 ```
 
+### Docker Compose（本地一键启动）
+
+```bash
+docker compose up --build
+```
+
+打开：
+- 后端：`http://127.0.0.1:8000`
+- 前端：`http://127.0.0.1:5173`
+
 ### 2) 启动 Workflow UI
 
 后端（自动打开 `http://127.0.0.1:8000`）：
@@ -77,8 +87,9 @@ UI 支持：
 - 设置 `pdf_mode` / 账期 / 分类模式
 - 编辑 `classifier.json`
 - 审核 `review.csv` 并生成最终结果
+- CSV/XLSX 表格预览与 PDF 缩略图预览（减少频繁下载）
 
-可选：`pnpm build` 后由后端直接托管 `web/dist/`。
+前端请通过 `pnpm dev` 单独启动（后端不托管前端静态资源）。
 
 ## 命令行流水线
 
