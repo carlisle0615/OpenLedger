@@ -19,12 +19,12 @@ interface StageCardProps {
 }
 
 function fmtStatus(s: string) {
-    if (s === "succeeded") return { text: "Success", variant: "default" as const, icon: CheckCircle2, color: "text-green-500" };
-    if (s === "failed") return { text: "Failed", variant: "destructive" as const, icon: XCircle, color: "text-red-500" };
-    if (s === "running") return { text: "Running", variant: "secondary" as const, icon: Loader2, color: "text-blue-500 animate-spin" };
-    if (s === "needs_review") return { text: "Needs Review", variant: "secondary" as const, icon: AlertCircle, color: "text-amber-500" };
-    if (s === "canceled") return { text: "Canceled", variant: "destructive" as const, icon: XCircle, color: "text-gray-500" };
-    if (s === "pending") return { text: "Pending", variant: "outline" as const, icon: Clock, color: "text-muted-foreground" };
+    if (s === "succeeded") return { text: "成功", variant: "default" as const, icon: CheckCircle2, color: "text-green-500" };
+    if (s === "failed") return { text: "失败", variant: "destructive" as const, icon: XCircle, color: "text-red-500" };
+    if (s === "running") return { text: "运行中", variant: "secondary" as const, icon: Loader2, color: "text-blue-500 animate-spin" };
+    if (s === "needs_review") return { text: "需复核", variant: "secondary" as const, icon: AlertCircle, color: "text-amber-500" };
+    if (s === "canceled") return { text: "已取消", variant: "destructive" as const, icon: XCircle, color: "text-gray-500" };
+    if (s === "pending") return { text: "排队中", variant: "outline" as const, icon: Clock, color: "text-muted-foreground" };
     return { text: s, variant: "outline" as const, icon: AlertCircle, color: "text-muted-foreground" };
 }
 
@@ -58,7 +58,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
             const r = await api<{ text: string }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/logs/${encodeURIComponent(stage.id)}`);
             setLogText(r.text);
         } catch {
-            setLogText("(Failed to load logs)");
+            setLogText("（日志加载失败）");
         } finally {
             setLoadingLog(false);
         }
@@ -71,7 +71,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
         void fetchLog();
 
         if (stage.status === "running") {
-            timer = window.setInterval(() => void fetchLog(), 1000);
+            timer = window.setInterval(() => void fetchLog(), 3000);
         }
         return () => {
             if (timer != null) window.clearInterval(timer);
@@ -105,7 +105,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
                         <Badge variant={status.variant} className="mr-2 h-5 px-1.5 text-[10px]">{status.text}</Badge>
                         <Button size="sm" variant={stage.status === 'running' ? "secondary" : "outline"} onClick={() => onRun?.(stage.id)} disabled={stage.status === 'running'} className="h-7 text-xs px-2">
                             <Play className="h-3 w-3 mr-1" />
-                            Run
+                            运行
                         </Button>
                     </div>
                 </div>
@@ -123,7 +123,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
 
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                        <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Inputs</h4>
+                        <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">输入</h4>
                         <div className="space-y-1">
                             {io?.inputs?.length ? (
                                 io.inputs.map((f) => (
@@ -138,13 +138,13 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
                                     </div>
                                 ))
                             ) : (
-                                <div className="text-[10px] text-muted-foreground italic p-1">No inputs</div>
+                                <div className="text-[10px] text-muted-foreground italic p-1">暂无输入</div>
                             )}
                         </div>
                     </div>
 
                     <div className="space-y-1.5">
-                        <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Outputs</h4>
+                        <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">输出</h4>
                         <div className="space-y-1">
                             {io?.outputs?.length ? (
                                 io.outputs.map((f) => (
@@ -159,7 +159,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
                                     </div>
                                 ))
                             ) : (
-                                <div className="text-[10px] text-muted-foreground italic p-1">No outputs</div>
+                                <div className="text-[10px] text-muted-foreground italic p-1">暂无输出</div>
                             )}
                         </div>
                     </div>
@@ -170,7 +170,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
                         <Button variant="ghost" size="sm" className="w-full justify-between h-8 px-3 hover:bg-muted/50 text-xs">
                             <span className="flex items-center gap-2 font-medium text-muted-foreground">
                                 <Terminal className="h-3.5 w-3.5" />
-                                Stage Logs
+                                阶段日志
                             </span>
                             {isLogOpen ? <ChevronDown className="h-3.5 w-3.5 opacity-50" /> : <ChevronRight className="h-3.5 w-3.5 opacity-50" />}
                         </Button>
@@ -179,7 +179,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
                         <div className="p-0 border-t">
                             <ScrollArea className="h-[200px] w-full bg-black/90 text-white rounded-b-md">
                                 <div className="p-3 font-mono text-[10px] leading-tight whitespace-pre-wrap">
-                                    {loadingLog ? <span className="text-muted-foreground">Loading...</span> : (logText || <span className="opacity-50">(Empty log)</span>)}
+                                    {loadingLog ? <span className="text-muted-foreground">加载中...</span> : (logText || <span className="opacity-50">（暂无日志）</span>)}
                                 </div>
                             </ScrollArea>
                         </div>

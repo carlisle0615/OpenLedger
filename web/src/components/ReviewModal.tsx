@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useReviewContext } from "@/hooks/useReviewContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,6 +54,7 @@ export function ReviewModal() {
     setNewCategoryName, setNewCategoryId,
     setError,
     loadReview, saveReviewEdits, applyBulkLocal, applyQuickRule, addCategory,
+    requestCloseReview,
 
     // Derived
     categories, filteredReviewRows, filteredReviewTxnIds, selectedTxnIds, bulkEffectiveTxnIds,
@@ -134,6 +135,28 @@ export function ReviewModal() {
     }
   };
 
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const ROW_HEIGHT = 36;
+  const OVERSCAN = 8;
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const update = () => setViewportHeight(el.clientHeight);
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => update());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const totalRows = filteredReviewRows.length;
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const endIndex = Math.min(totalRows, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN);
+  const visibleRows = filteredReviewRows.slice(startIndex, endIndex);
+  const offsetY = startIndex * ROW_HEIGHT;
   if (!reviewOpen) return null;
 
   return (
@@ -141,25 +164,20 @@ export function ReviewModal() {
       <div className="fixed inset-0 flex">
         <div className="w-full h-full bg-background overflow-hidden flex flex-col">
           <div className="p-3 border-b flex items-center gap-2">
-            <div className="font-semibold">Manual Review</div>
-            <Badge variant="outline" className="h-6 text-[10px] font-mono">pending {reviewPendingCount}</Badge>
-            <Badge variant="outline" className="h-6 text-[10px] font-mono">edited {Object.keys(reviewEdits).length}</Badge>
-            <Badge variant="outline" className="h-6 text-[10px] font-mono">loaded {reviewRows.length}</Badge>
+            <div className="font-semibold">人工复核</div>
+            <Badge variant="outline" className="h-6 text-[10px] font-mono">待复核 {reviewPendingCount}</Badge>
+            <Badge variant="outline" className="h-6 text-[10px] font-mono">已编辑 {Object.keys(reviewEdits).length}</Badge>
+            <Badge variant="outline" className="h-6 text-[10px] font-mono">已加载 {reviewRows.length}</Badge>
             <div className="ml-auto flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => void loadReview()} disabled={!runId || busy}>Reload</Button>
-              <Button size="sm" onClick={saveReviewEdits} disabled={!Object.keys(reviewEdits).length || busy}>Save</Button>
+              <Button size="sm" variant="outline" onClick={() => void loadReview()} disabled={!runId || busy}>重新加载</Button>
+              <Button size="sm" onClick={saveReviewEdits} disabled={!Object.keys(reviewEdits).length || busy}>保存</Button>
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => {
-                  if (window.location.hash === "#review") {
-                    window.history.replaceState(null, "", window.location.pathname + window.location.search);
-                  }
-                  setReviewOpen(false);
-                }}
+                onClick={() => void requestCloseReview()}
                 disabled={busy}
               >
-                Close
+                关闭
               </Button>
             </div>
           </div>
@@ -178,9 +196,9 @@ export function ReviewModal() {
                     <label
                       htmlFor="pending_only_modal"
                       className="text-xs leading-none text-muted-foreground"
-                      title="只显示“需要人工确认”的记录（uncertain 且未填写 final 且未被忽略）"
+                      title="只显示“需要人工确认”的记录（建议不确定、未填写最终分类且未被忽略）"
                     >
-                      仅待审核
+                      仅待复核
                     </label>
                   </div>
                   <Input
@@ -195,7 +213,7 @@ export function ReviewModal() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="h-7 text-[10px] font-mono" title="当前已勾选的 txn_id 数量（用于批量操作）">
+                  <Badge variant="outline" className="h-7 text-[10px] font-mono" title="当前已勾选的交易 ID 数量（用于批量操作）">
                     已选 {selectedTxnIds.length}
                   </Badge>
 
@@ -219,9 +237,9 @@ export function ReviewModal() {
                     <label
                       htmlFor="bulk_include_reviewed"
                       className={cn("text-xs leading-none text-muted-foreground", bulkTarget !== "filtered" && "opacity-60")}
-                      title="当选择“当前筛选结果”时：是否包含已审核的行（忽略“仅待审核”筛选）"
+                      title="当选择“当前筛选结果”时：是否包含已复核的行（忽略“仅待复核”筛选）"
                     >
-                      包含已审核
+                      包含已复核
                     </label>
                   </div>
 
@@ -308,52 +326,57 @@ export function ReviewModal() {
 
                 {bulkContinuousMode ? (
                   <div className="text-xs text-muted-foreground">
-                    快捷键：<span className="font-mono">1~9</span> 选分类，<span className="font-mono">I</span> 切换不记账，<span className="font-mono">Enter</span> 应用，<span className="font-mono">↑/↓</span> 移动
+                    快捷键：<span className="font-mono">1~9</span> 选分类，<span className="font-mono">I</span> 切换不记账，<span className="font-mono">回车</span> 应用，<span className="font-mono">↑/↓</span> 移动
                   </div>
                 ) : null}
               </div>
 
-              <ScrollArea className="flex-1">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="h-9 text-xs w-[42px]">
-                        <Checkbox
-                          checked={filteredReviewTxnIds.length > 0 && filteredReviewTxnIds.every((id) => Boolean(reviewSelectedTxnIds[id]))}
-                          onCheckedChange={(chk: boolean | string) => {
-                            const on = chk === true;
-                            setReviewSelectedTxnIds((prev) => {
-                              const next: Record<string, boolean> = { ...prev };
-                              if (on) {
-                                for (const id of filteredReviewTxnIds) next[id] = true;
-                              } else {
-                                for (const id of filteredReviewTxnIds) delete next[id];
-                              }
-                              return next;
-                            });
-                          }}
-                          title="全选/取消全选：当前筛选结果"
-                        />
-                      </TableHead>
-                      <TableHead className="h-9 text-xs w-[90px]">日期</TableHead>
-                      <TableHead className="h-9 text-xs text-right w-[90px]">金额</TableHead>
-                      <TableHead className="h-9 text-xs">商户</TableHead>
-                      <TableHead className="h-9 text-xs">商品</TableHead>
-                      <TableHead className="h-9 text-xs w-[120px]">建议</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredReviewRows.map((r) => {
+              <div
+                ref={listRef}
+                onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+                className="flex-1 overflow-auto"
+              >
+                <div className="sticky top-0 z-10 bg-background border-b">
+                  <div className="grid grid-cols-[42px_90px_90px_1fr_1fr_150px] h-9 items-center text-xs text-muted-foreground px-2">
+                    <div className="flex items-center justify-center">
+                      <Checkbox
+                        checked={filteredReviewTxnIds.length > 0 && filteredReviewTxnIds.every((id) => Boolean(reviewSelectedTxnIds[id]))}
+                        onCheckedChange={(chk: boolean | string) => {
+                          const on = chk === true;
+                          setReviewSelectedTxnIds((prev) => {
+                            const next: Record<string, boolean> = { ...prev };
+                            if (on) {
+                              for (const id of filteredReviewTxnIds) next[id] = true;
+                            } else {
+                              for (const id of filteredReviewTxnIds) delete next[id];
+                            }
+                            return next;
+                          });
+                        }}
+                        title="全选/取消全选：当前筛选结果"
+                      />
+                    </div>
+                    <div>日期</div>
+                    <div className="text-right">金额</div>
+                    <div>商户</div>
+                    <div>商品</div>
+                    <div>建议</div>
+                  </div>
+                </div>
+
+                <div className="relative" style={{ height: totalRows * ROW_HEIGHT }}>
+                  <div style={{ transform: `translateY(${offsetY}px)` }}>
+                    {visibleRows.map((r) => {
                       const pending = String(r.__pending ?? "") === "true";
                       const txnId = String(r.txn_id ?? "");
                       const rowKey = `${txnId}-${String(r.__row_idx ?? "")}`;
                       const ignored = isTxnIgnored(txnId, r);
                       const active = txnId && txnId === reviewSelectedTxnId;
                       return (
-                        <TableRow
+                        <div
                           key={rowKey}
                           className={cn(
-                            "h-9 cursor-pointer",
+                            "grid grid-cols-[42px_90px_90px_1fr_1fr_150px] h-9 items-center px-2 text-xs border-b cursor-pointer",
                             ignored && !active && "bg-muted/30",
                             pending && "bg-amber-50/40",
                             active && "bg-accent"
@@ -386,8 +409,8 @@ export function ReviewModal() {
                             setReviewSelectedTxnId(txnId);
                           }}
                         >
-                          <TableCell
-                            className="py-1 text-xs font-mono whitespace-nowrap select-none"
+                          <div
+                            className="flex items-center justify-center font-mono whitespace-nowrap select-none"
                             onPointerDown={(e) => {
                               e.stopPropagation();
                               if (!txnId) return;
@@ -411,12 +434,12 @@ export function ReviewModal() {
                                 title="勾选后可批量应用分类/忽略"
                               />
                             </div>
-                          </TableCell>
-                          <TableCell className="py-1 text-xs font-mono whitespace-nowrap">{String(r.trade_date ?? "")}</TableCell>
-                          <TableCell className="py-1 text-xs font-mono whitespace-nowrap text-right">{String(r.amount ?? "")}</TableCell>
-                          <TableCell className="py-1 text-xs truncate max-w-[220px]" title={String(r.merchant ?? "")}>{String(r.merchant ?? "")}</TableCell>
-                          <TableCell className="py-1 text-xs truncate max-w-[220px]" title={String(r.item ?? "")}>{String(r.item ?? "")}</TableCell>
-                          <TableCell className="py-1 text-[10px] text-muted-foreground truncate max-w-[150px]" title={String(r.suggested_category_name ?? r.suggested_category_id ?? "")}>
+                          </div>
+                          <div className="font-mono whitespace-nowrap">{String(r.trade_date ?? "")}</div>
+                          <div className="font-mono whitespace-nowrap text-right">{String(r.amount ?? "")}</div>
+                          <div className="truncate max-w-[220px]" title={String(r.merchant ?? "")}>{String(r.merchant ?? "")}</div>
+                          <div className="truncate max-w-[220px]" title={String(r.item ?? "")}>{String(r.item ?? "")}</div>
+                          <div className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={String(r.suggested_category_name ?? r.suggested_category_id ?? "")}>
                             <div className="flex items-center gap-2">
                               <span className="truncate">{String(r.suggested_category_name ?? r.suggested_category_id ?? "")}</span>
                               {ignored ? (
@@ -425,13 +448,13 @@ export function ReviewModal() {
                                 </Badge>
                               ) : null}
                             </div>
-                          </TableCell>
-                        </TableRow>
+                          </div>
+                        </div>
                       );
                     })}
-                  </TableBody>
-                </Table>
-              </ScrollArea>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Right: details + quick rules */}
@@ -446,23 +469,23 @@ export function ReviewModal() {
                     <Card>
                       <CardHeader className="py-3">
                         <CardTitle className="text-base">
-                          {String(selectedReviewRow.merchant ?? "") || "(no merchant)"}
+                          {String(selectedReviewRow.merchant ?? "") || "（无商户）"}
                         </CardTitle>
                         <CardDescription className="font-mono text-[10px] text-muted-foreground/70">
-                          txn_id={String(selectedReviewRow.txn_id ?? "")}
+                          交易 ID={String(selectedReviewRow.txn_id ?? "")}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="py-3 space-y-3">
                         <div className="grid grid-cols-2 gap-3">
                           {[
-                            ["trade_date", "Trade Date"],
-                            ["trade_time", "Trade Time"],
-                            ["post_date", "Post Date"],
-                            ["account", "Account"],
-                            ["amount", "Amount"],
-                            ["flow", "Flow"],
-                            ["pay_method", "Pay Method"],
-                            ["category", "Raw Category"],
+                            ["trade_date", "交易日期"],
+                            ["trade_time", "交易时间"],
+                            ["post_date", "入账日期"],
+                            ["account", "账户"],
+                            ["amount", "金额"],
+                            ["flow", "收支"],
+                            ["pay_method", "支付方式"],
+                            ["category", "原始分类"],
                           ].map(([k, label]) => (
                             <div key={k} className="space-y-1">
                               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
@@ -476,14 +499,14 @@ export function ReviewModal() {
                         <div className="space-y-2">
                           <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1">
-                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Suggested</div>
+                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">建议</div>
                               <div className="text-xs">
                                 <span className="font-mono">{String(selectedReviewRow.suggested_category_name ?? selectedReviewRow.suggested_category_id ?? "") || "-"}</span>
                                 <span className="text-muted-foreground ml-2 font-mono text-[11px]">
-                                  conf={String(selectedReviewRow.suggested_confidence ?? "") || "-"}
+                                  置信度={String(selectedReviewRow.suggested_confidence ?? "") || "-"}
                                 </span>
                                 {parseBoolish(selectedReviewRow.suggested_uncertain) ? (
-                                  <Badge variant="secondary" className="ml-2 h-5 text-[10px]">uncertain</Badge>
+                                  <Badge variant="secondary" className="ml-2 h-5 text-[10px]">不确定</Badge>
                                 ) : null}
                               </div>
                               <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
@@ -492,7 +515,7 @@ export function ReviewModal() {
                             </div>
                             <div className="space-y-2">
                               <div className="flex items-center justify-between">
-                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Final</div>
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">最终</div>
                                 <Badge variant="outline" className="h-5 text-[10px] font-mono">
                                   {String(selectedReviewRow.trade_date ?? "")}
                                 </Badge>
@@ -502,10 +525,10 @@ export function ReviewModal() {
                                 onValueChange={(v: string) => setEdit(reviewSelectedTxnId, "final_category_id", v === "__clear__" ? "" : v)}
                               >
                                 <SelectTrigger className="h-8 text-xs w-full">
-                                  <SelectValue placeholder="(use suggested)" />
+                                  <SelectValue placeholder="（使用建议）" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="__clear__">(clear)</SelectItem>
+                                  <SelectItem value="__clear__">（清空）</SelectItem>
                                   {config?.categories?.map((c) => (
                                     <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                                   ))}
@@ -531,13 +554,13 @@ export function ReviewModal() {
                                 className="w-full min-h-[70px] p-2 rounded-md border bg-muted/50 font-mono text-xs focus:outline-none"
                                 value={String((reviewEdits[reviewSelectedTxnId]?.final_note as any) ?? selectedReviewRow.final_note ?? "")}
                                 onChange={(e) => setEdit(reviewSelectedTxnId, "final_note", e.target.value)}
-                                placeholder="Final note (optional)"
+                                placeholder="最终备注（可选）"
                               />
                             </div>
                           </div>
 
                           <div className="space-y-1">
-                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Remark / Sources</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">备注 / 来源</div>
                             <div className="text-xs whitespace-pre-wrap break-words">
                               {String(selectedReviewRow.remark ?? "")}
                             </div>
@@ -561,8 +584,8 @@ export function ReviewModal() {
                                   <Table>
                                     <TableHeader>
                                       <TableRow>
-                                        <TableHead className="h-8 text-xs w-[220px]">Field</TableHead>
-                                        <TableHead className="h-8 text-xs">Value</TableHead>
+                                        <TableHead className="h-8 text-xs w-[220px]">字段</TableHead>
+                                        <TableHead className="h-8 text-xs">值</TableHead>
                                       </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -582,112 +605,112 @@ export function ReviewModal() {
                       </CardContent>
                     </Card>
 
-                    <Card>
-                      <CardHeader className="py-3">
-                        <CardTitle className="text-base">快速规则（试运行）</CardTitle>
-                        <CardDescription className="text-xs">
-                          配置规则后会批量更新当前账期匹配行，并可选写入 <span className="font-mono">regex_category_rules</span>/<span className="font-mono">ignore_rules</span>（以后自动生效）。
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="py-3 space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Action</div>
-                            <Select value={ruleAction} onValueChange={(v: string) => setRuleAction(v as RuleAction)}>
-                              <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="categorize">分类</SelectItem>
-                                <SelectItem value="ignore">不记账</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-1">
-                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Field</div>
-                            <Select value={ruleField} onValueChange={(v: string) => setRuleField(v as RuleMatchField)}>
-                              <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="merchant">merchant</SelectItem>
-                                <SelectItem value="item">item</SelectItem>
-                                <SelectItem value="remark">remark</SelectItem>
-                                <SelectItem value="category">category</SelectItem>
-                                <SelectItem value="pay_method">pay_method</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-1">
-                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Mode</div>
-                            <Select value={ruleMode} onValueChange={(v: string) => setRuleMode(v as RuleMatchMode)}>
-                              <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="contains">contains</SelectItem>
-                                <SelectItem value="regex">regex</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="col-span-2 space-y-1">
-                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Pattern</div>
-                            <div className="flex gap-2">
-                              <Input
-                                value={rulePattern}
-                                onChange={(e) => setRulePattern(e.target.value)}
-                                placeholder="e.g. 一家打面"
-                                className="h-8 text-xs flex-1"
-                              />
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  setRuleField("merchant");
-                                  setRuleMode("contains");
-                                  setRulePattern(String(selectedReviewRow.merchant ?? ""));
-                                }}
-                              >
-                                Use merchant
-                              </Button>
+                      <Card>
+                        <CardHeader className="py-3">
+                          <CardTitle className="text-base">快速规则（试运行）</CardTitle>
+                          <CardDescription className="text-xs">
+                          配置规则后会批量更新当前账期匹配行，并可选写入 <span className="font-mono">regex_category_rules</span>/<span className="font-mono">ignore_rules</span>（后续任务自动生效）。
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="py-3 space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">操作</div>
+                              <Select value={ruleAction} onValueChange={(v: string) => setRuleAction(v as RuleAction)}>
+                                <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="categorize">分类</SelectItem>
+                                  <SelectItem value="ignore">不记账</SelectItem>
+                                </SelectContent>
+                              </Select>
                             </div>
-                            {rulePreview.error ? (
-                              <div className="text-xs text-destructive">{rulePreview.error}</div>
-                            ) : null}
-                          </div>
-                          {ruleAction === "categorize" ? (
-                            <>
-                              <div className="space-y-1">
-                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Category</div>
-                                <Select value={ruleCategoryId} onValueChange={setRuleCategoryId}>
-                                  <SelectTrigger className="h-8 text-xs w-full">
-                                    <SelectValue placeholder="选择分类" />
-                                  </SelectTrigger>
-                                  <SelectContent>
+                            <div className="space-y-1">
+                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">字段</div>
+                              <Select value={ruleField} onValueChange={(v: string) => setRuleField(v as RuleMatchField)}>
+                                <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="merchant">商户</SelectItem>
+                                  <SelectItem value="item">商品</SelectItem>
+                                  <SelectItem value="remark">备注</SelectItem>
+                                  <SelectItem value="category">分类</SelectItem>
+                                  <SelectItem value="pay_method">支付方式</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">匹配方式</div>
+                              <Select value={ruleMode} onValueChange={(v: string) => setRuleMode(v as RuleMatchMode)}>
+                                <SelectTrigger className="h-8 text-xs w-full"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="contains">包含</SelectItem>
+                                  <SelectItem value="regex">正则</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="col-span-2 space-y-1">
+                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">规则</div>
+                              <div className="flex gap-2">
+                                <Input
+                                  value={rulePattern}
+                                  onChange={(e) => setRulePattern(e.target.value)}
+                                  placeholder="例如：一家打面"
+                                  className="h-8 text-xs flex-1"
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setRuleField("merchant");
+                                    setRuleMode("contains");
+                                    setRulePattern(String(selectedReviewRow.merchant ?? ""));
+                                  }}
+                                >
+                                使用商户
+                                </Button>
+                              </div>
+                              {rulePreview.error ? (
+                                <div className="text-xs text-destructive">{rulePreview.error}</div>
+                              ) : null}
+                            </div>
+                            {ruleAction === "categorize" ? (
+                              <>
+                                <div className="space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">分类</div>
+                                  <Select value={ruleCategoryId} onValueChange={setRuleCategoryId}>
+                                    <SelectTrigger className="h-8 text-xs w-full">
+                                      <SelectValue placeholder="选择分类" />
+                                    </SelectTrigger>
+                                    <SelectContent>
                                     {config?.categories?.map((c) => (
                                       <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                                     ))}
                                   </SelectContent>
                                 </Select>
-                              </div>
-                              <div className="space-y-1">
-                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Add Category</div>
-                                <div className="flex gap-2">
-                                  <Input
-                                    value={newCategoryName}
-                                    onChange={(e) => setNewCategoryName(e.target.value)}
-                                    placeholder="name (e.g. 餐饮)"
-                                    className="h-8 text-xs"
-                                  />
-                                  <Input
-                                    value={newCategoryId}
-                                    onChange={(e) => setNewCategoryId(e.target.value)}
-                                    placeholder="id (optional)"
-                                    className="h-8 text-xs font-mono"
-                                  />
-                                  <Button size="sm" variant="outline" onClick={() => void addCategory()} disabled={busy}>
-                                    Add
-                                  </Button>
                                 </div>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="col-span-2 text-xs text-muted-foreground">
-                              不记账规则会写入 <span className="font-mono">ignore_rules</span>，并批量设置 <span className="font-mono">final_ignored=true</span>。
+                                <div className="space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">新增分类</div>
+                                  <div className="flex gap-2">
+                                    <Input
+                                      value={newCategoryName}
+                                      onChange={(e) => setNewCategoryName(e.target.value)}
+                                      placeholder="名称（例如：餐饮）"
+                                      className="h-8 text-xs"
+                                    />
+                                    <Input
+                                      value={newCategoryId}
+                                      onChange={(e) => setNewCategoryId(e.target.value)}
+                                      placeholder="ID（可选）"
+                                      className="h-8 text-xs font-mono"
+                                    />
+                                    <Button size="sm" variant="outline" onClick={() => void addCategory()} disabled={busy}>
+                                    新增
+                                    </Button>
+                                  </div>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="col-span-2 text-xs text-muted-foreground">
+                                不记账规则会写入 <span className="font-mono">ignore_rules</span>，并批量设置 <span className="font-mono">final_ignored=true</span>。
                             </div>
                           )}
                         </div>
@@ -702,9 +725,9 @@ export function ReviewModal() {
                             <label
                               htmlFor="rule_only_pending"
                               className="text-xs leading-none text-muted-foreground"
-                              title="仅对左侧列表中“待审核（黄色背景）”的行生效；取消勾选可匹配全部行"
+                              title="仅对左侧列表中“待复核（黄色背景）”的行生效；取消勾选可匹配全部行"
                             >
-                              仅待审核
+                              仅待复核
                             </label>
                           </div>
                           <div className="flex items-center gap-2">
@@ -759,11 +782,11 @@ export function ReviewModal() {
                         </div>
 
                         <div className="space-y-1">
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Note / Reason (optional)</div>
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">备注 / 原因（可选）</div>
                           <Input
                             value={ruleNote}
                             onChange={(e) => setRuleNote(e.target.value)}
-                            placeholder={ruleAction === "ignore" ? "不记账原因（会写入 final_ignore_reason）" : "原因（final_note 为空时写入）"}
+                            placeholder={ruleAction === "ignore" ? "不记账原因（写入 final_ignore_reason）" : "原因（final_note 为空时写入）"}
                             className="h-8 text-xs"
                           />
                         </div>
@@ -774,7 +797,7 @@ export function ReviewModal() {
                             onClick={() => void applyQuickRule()}
                             disabled={busy || !rulePattern.trim() || (ruleAction === "categorize" && !ruleCategoryId) || rulePreview.matches.length === 0}
                           >
-                            Apply to {rulePreview.matches.length}
+                            应用到 {rulePreview.matches.length} 条
                           </Button>
                           <span className="text-xs text-muted-foreground">
                             例如：<span className="font-mono">一家打面</span> → <span className="font-mono">餐饮</span>
@@ -787,10 +810,10 @@ export function ReviewModal() {
                               <Table>
                                 <TableHeader>
                                   <TableRow>
-                                    <TableHead className="h-8 text-xs">Date</TableHead>
-                                    <TableHead className="h-8 text-xs text-right">Amt</TableHead>
-                                    <TableHead className="h-8 text-xs">Merchant</TableHead>
-                                    <TableHead className="h-8 text-xs">Item</TableHead>
+                                    <TableHead className="h-8 text-xs">日期</TableHead>
+                                    <TableHead className="h-8 text-xs text-right">金额</TableHead>
+                                    <TableHead className="h-8 text-xs">商户</TableHead>
+                                    <TableHead className="h-8 text-xs">商品</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>

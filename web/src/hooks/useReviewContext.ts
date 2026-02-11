@@ -83,6 +83,7 @@ export interface ReviewActions {
     applyBulkLocal: () => Promise<void>;
     applyQuickRule: () => Promise<void>;
     addCategory: () => Promise<void>;
+    requestCloseReview: () => Promise<boolean>;
 }
 
 export interface ReviewDerived {

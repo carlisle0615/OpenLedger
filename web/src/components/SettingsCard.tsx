@@ -10,18 +10,19 @@ interface SettingsCardProps {
   pdfModes: PdfMode[];
   busy: boolean;
   saveOptions: (updates: Partial<any>) => void;
+  onAllowUnreviewedChange: (next: boolean) => void;
 }
 
-export function SettingsCard({ state, pdfModes, busy, saveOptions }: SettingsCardProps) {
+export function SettingsCard({ state, pdfModes, busy, saveOptions, onAllowUnreviewedChange }: SettingsCardProps) {
   const modes = pdfModes?.length ? pdfModes : [{ id: "auto", name: "自动识别（推荐）" }];
   return (
     <Card>
       <CardHeader className="py-3">
-        <CardTitle className="text-base">Settings</CardTitle>
+        <CardTitle className="text-base">设置</CardTitle>
       </CardHeader>
       <CardContent className="py-3 space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">Mode</span>
+          <span className="text-sm font-medium">模式</span>
           <Select
             value={state?.options?.classify_mode ?? "llm"}
             onValueChange={(val: string) => saveOptions({ classify_mode: val as "llm" | "dry_run" })}
@@ -32,12 +33,12 @@ export function SettingsCard({ state, pdfModes, busy, saveOptions }: SettingsCar
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="llm">LLM</SelectItem>
-              <SelectItem value="dry_run">Dry Run</SelectItem>
+              <SelectItem value="dry_run">试运行</SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">PDF Mode</span>
+          <span className="text-sm font-medium">PDF 解析模式</span>
           <Select
             value={state?.options?.pdf_mode ?? "auto"}
             onValueChange={(val: string) => saveOptions({ pdf_mode: val })}
@@ -59,17 +60,20 @@ export function SettingsCard({ state, pdfModes, busy, saveOptions }: SettingsCar
           <Checkbox
             id="allow_unreviewed"
             checked={Boolean(state?.options?.allow_unreviewed)}
-            onCheckedChange={(chk: boolean | string) => saveOptions({ allow_unreviewed: chk === true })}
+            onCheckedChange={(chk: boolean | string) => onAllowUnreviewedChange(chk === true)}
             disabled={!state || busy}
           />
           <label htmlFor="allow_unreviewed" className="text-xs leading-none">
-            Allow no review
+            允许跳过人工复核
           </label>
+        </div>
+        <div className="text-[11px] text-destructive">
+          开启后将跳过人工复核，可能导致分类错误无法被发现。
         </div>
         <Separator />
         <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Statement</span>
+            <span className="text-sm font-medium">账期</span>
             <div className="flex items-center gap-2">
               <Select
                 value={state?.options?.period_year ? String(state.options.period_year) : "__all__"}
@@ -87,10 +91,10 @@ export function SettingsCard({ state, pdfModes, busy, saveOptions }: SettingsCar
                 disabled={!state || busy}
               >
                 <SelectTrigger className="w-[92px] h-7 text-xs">
-                  <SelectValue placeholder="All" />
+                  <SelectValue placeholder="全部" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__all__">All</SelectItem>
+                  <SelectItem value="__all__">全部</SelectItem>
                   {Array.from({ length: 11 }).map((_, i) => {
                     const y = 2020 + i;
                     return (
@@ -110,10 +114,10 @@ export function SettingsCard({ state, pdfModes, busy, saveOptions }: SettingsCar
                 disabled={!state || busy || !state?.options?.period_year}
               >
                 <SelectTrigger className="w-[84px] h-7 text-xs">
-                  <SelectValue placeholder="All" />
+                  <SelectValue placeholder="全部" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__all__">All</SelectItem>
+                  <SelectItem value="__all__">全部</SelectItem>
                   {Array.from({ length: 12 }).map((_, i) => (
                     <SelectItem key={i + 1} value={String(i + 1)} className="text-xs">
                       {i + 1}月
@@ -131,8 +135,8 @@ export function SettingsCard({ state, pdfModes, busy, saveOptions }: SettingsCar
               const prevM = m === 1 ? 12 : m - 1;
               const start = `${prevY}-${String(prevM).padStart(2, "0")}-21`;
               const end = `${y}-${String(m).padStart(2, "0")}-20`;
-              return `Cycle: ${start} ~ ${end}`;
-            })() : "No date filter (cycle is prev month 21 ~ selected month 20)"}
+              return `账期范围：${start} ~ ${end}`;
+            })() : "未设置账期筛选（默认范围：上月21日 ~ 本月20日）"}
           </div>
         </div>
       </CardContent>

@@ -2,13 +2,13 @@ import { Loader2, CheckCircle2, XCircle, Ban, AlertCircle, Clock } from "lucide-
 
 // 状态格式化
 export function fmtStatus(s: string) {
-    if (s === "succeeded") return { text: "Success", variant: "default" as const, icon: CheckCircle2 };
-    if (s === "failed") return { text: "Failed", variant: "destructive" as const, icon: XCircle };
-    if (s === "running") return { text: "Running", variant: "secondary" as const, icon: Loader2 };
-    if (s === "canceled") return { text: "Canceled", variant: "destructive" as const, icon: Ban };
-    if (s === "needs_review") return { text: "Needs Review", variant: "secondary" as const, icon: AlertCircle };
-    if (s === "idle") return { text: "Idle", variant: "outline" as const, icon: Clock };
-    if (s === "pending") return { text: "Pending", variant: "outline" as const, icon: Clock };
+    if (s === "succeeded") return { text: "成功", variant: "default" as const, icon: CheckCircle2 };
+    if (s === "failed") return { text: "失败", variant: "destructive" as const, icon: XCircle };
+    if (s === "running") return { text: "运行中", variant: "secondary" as const, icon: Loader2 };
+    if (s === "canceled") return { text: "已取消", variant: "destructive" as const, icon: Ban };
+    if (s === "needs_review") return { text: "需复核", variant: "secondary" as const, icon: AlertCircle };
+    if (s === "idle") return { text: "空闲", variant: "outline" as const, icon: Clock };
+    if (s === "pending") return { text: "排队中", variant: "outline" as const, icon: Clock };
     return { text: s, variant: "outline" as const, icon: AlertCircle };
 }
 

@@ -30,16 +30,16 @@ export function WorkflowPanel({
   return (
     <div className="lg:col-span-4 space-y-4">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-lg font-semibold">Workflow</h3>
+        <h3 className="text-lg font-semibold">流程</h3>
         <div className="flex gap-2">
           <Button variant="default" size="sm" onClick={() => startWorkflow(undefined)} disabled={!runId || busy}>
-            <Play className="mr-2 h-3.5 w-3.5" /> Run All
+            <Play className="mr-2 h-3.5 w-3.5" /> 运行全部
           </Button>
           <Button variant="outline" size="sm" onClick={() => void resetClassify()} disabled={!runId || busy}>
             <RotateCcw className="mr-2 h-3.5 w-3.5" /> 重置分类产物
           </Button>
           <Button variant="destructive" size="sm" onClick={() => cancelRun()} disabled={!runId || busy}>
-            <Ban className="mr-2 h-3.5 w-3.5" /> Stop
+            <Ban className="mr-2 h-3.5 w-3.5" /> 停止
           </Button>
         </div>
       </div>
@@ -110,7 +110,7 @@ export function WorkflowPanel({
       ) : (
         <div className="flex flex-col items-center justify-center p-12 text-muted-foreground border-dashed border-2 rounded-lg bg-muted/5">
           <Ban className="h-8 w-8 mb-2 opacity-20" />
-          <p>No active run stages</p>
+          <p>暂无可用阶段</p>
         </div>
       )}
     </div>

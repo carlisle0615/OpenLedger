@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { FileText, Upload } from "lucide-react";
+import { FileText, Download } from "lucide-react";
 import { FileItem, CsvPreview } from "@/types";
 
 interface PreviewAreaProps {
@@ -21,7 +21,7 @@ export function PreviewArea({ selectedFile, downloadHref, previewError, csvPrevi
       <CardHeader className="py-3 border-b bg-muted/20">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <CardTitle className="text-base">Preview</CardTitle>
+            <CardTitle className="text-base">预览</CardTitle>
             {selectedFile && <Badge variant="secondary" className="font-mono text-xs">{selectedFile.name}</Badge>}
           </div>
           {selectedFile && (
@@ -31,7 +31,7 @@ export function PreviewArea({ selectedFile, downloadHref, previewError, csvPrevi
               rel="noreferrer"
               className="text-xs flex items-center gap-1 hover:underline text-primary"
             >
-              <Upload className="h-3 w-3" /> Download
+              <Download className="h-3 w-3" /> 下载
             </a>
           )}
         </div>
@@ -40,7 +40,7 @@ export function PreviewArea({ selectedFile, downloadHref, previewError, csvPrevi
         {!selectedFile ? (
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8">
             <FileText className="h-12 w-12 mb-2 opacity-10" />
-            <p className="text-sm">Select a file from any stage to preview</p>
+            <p className="text-sm">从任意阶段选择文件进行预览</p>
           </div>
         ) : (
           <div className="absolute inset-0 overflow-auto">
@@ -49,8 +49,8 @@ export function PreviewArea({ selectedFile, downloadHref, previewError, csvPrevi
             {csvPreview && (
               <div className="p-4">
                 <div className="flex gap-2 mb-2">
-                  <Button variant="outline" size="sm" disabled={csvPreview.prev_offset == null} onClick={() => loadCsv(selectedFile!.path, csvPreview.prev_offset ?? 0)}>Prev</Button>
-                  <Button variant="outline" size="sm" disabled={!csvPreview.has_more} onClick={() => loadCsv(selectedFile!.path, csvPreview.next_offset ?? 0)}>Next</Button>
+                  <Button variant="outline" size="sm" disabled={csvPreview.prev_offset == null} onClick={() => loadCsv(selectedFile!.path, csvPreview.prev_offset ?? 0)}>上一页</Button>
+                  <Button variant="outline" size="sm" disabled={!csvPreview.has_more} onClick={() => loadCsv(selectedFile!.path, csvPreview.next_offset ?? 0)}>下一页</Button>
                   <span className="text-xs text-muted-foreground ml-auto self-center">
                     {csvPreview.offset} - {csvPreview.offset + csvPreview.rows.length}
                   </span>

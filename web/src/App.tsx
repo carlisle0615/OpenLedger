@@ -1,8 +1,7 @@
-import React, { useEffect, useMemo, useState, useRef } from "react";
-import { StageCard } from "@/components/StageCard";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
@@ -10,7 +9,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -20,25 +18,17 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   ClassifierConfig,
   CsvPreview,
   FileItem,
   PdfMode,
   RunState,
 } from "@/types";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Play, Ban, RefreshCw, FileText, Upload, CheckCircle2, XCircle, AlertCircle, Clock, FileInput, CreditCard, Landmark, GitMerge, Fingerprint, Flag, Download, RotateCcw } from "lucide-react";
+import { Play, RefreshCw, CheckCircle2, AlertCircle, Clock } from "lucide-react";
 import { cn } from "@/lib/utils"; // Assuming cn utility is available
 import { fmtStatus, api, isCsvFile, isTextFile, parseBoolish, escapeRegExp, slugifyId, suggestCategoryId, type RuleMatchMode, type RuleMatchField, type RuleAction, type RunMeta } from "@/utils/helpers";
 import { useFilteredReviewRows, useReviewPendingCount, useSelectedReviewFields, ReviewContext, ReviewContextType } from "@/hooks/useReviewContext";
+import { useConfirm } from "@/hooks/useConfirm";
 import { SettingsCard } from "@/components/SettingsCard";
 import { PreviewArea } from "@/components/PreviewArea";
 import { WorkflowPanel } from "@/components/WorkflowPanel";
@@ -53,6 +43,8 @@ export default function App() {
   const [runs, setRuns] = useState<string[]>([]);
   const [runId, setRunId] = useState<string>("");
   const [runsMeta, setRunsMeta] = useState<RunMeta[]>([]);
+  const [backendStatus, setBackendStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
+  const [backendError, setBackendError] = useState<string>("");
   const [pdfModes, setPdfModes] = useState<PdfMode[]>([]);
   const [newRunName, setNewRunName] = useState<string>("");
   const [state, setState] = useState<RunState | null>(null);
@@ -95,6 +87,7 @@ export default function App() {
   const [error, setError] = useState<string>("");
   const [selectedStageId, setSelectedStageId] = useState<string>("");
   const lastOptionEdit = useRef<number>(0);
+  const { confirm, dialog } = useConfirm();
 
   useEffect(() => {
     localStorage.setItem("openledger_baseUrl", baseUrl);
@@ -113,29 +106,54 @@ export default function App() {
     };
   }, [reviewOpen]);
 
+  const requestCloseReview = useCallback(async () => {
+    const hasEdits = Object.keys(reviewEdits).length > 0;
+    if (hasEdits) {
+      const ok = await confirm({
+        title: "确认关闭人工复核？",
+        description: "当前有未保存的修改，关闭后将丢失。",
+        confirmText: "仍然关闭",
+        cancelText: "继续编辑",
+        tone: "danger",
+      });
+      if (!ok) return false;
+    }
+    if (window.location.hash === "#review") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    setReviewOpen(false);
+    return true;
+  }, [confirm, reviewEdits]);
+
   useEffect(() => {
     const sync = () => {
       const open = window.location.hash === "#review";
-      setReviewOpen(open);
+      if (open) {
+        setReviewOpen(true);
+      } else if (reviewOpen) {
+        void (async () => {
+          const closed = await requestCloseReview();
+          if (!closed && window.location.hash !== "#review") {
+            window.location.hash = "review";
+          }
+        })();
+      }
     };
     sync();
     window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
-  }, []);
+  }, [reviewOpen, requestCloseReview]);
 
   useEffect(() => {
     if (!reviewOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (window.location.hash === "#review") {
-          window.history.replaceState(null, "", window.location.pathname + window.location.search);
-        }
-        setReviewOpen(false);
+        void requestCloseReview();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [reviewOpen]);
+  }, [reviewOpen, requestCloseReview]);
 
   const runName = useMemo(() => {
     const n = String(state?.name ?? "").trim();
@@ -144,10 +162,24 @@ export default function App() {
     return String(hit?.name ?? "").trim();
   }, [state, runsMeta, runId]);
 
-  async function refreshRuns() {
-    const r = await api<{ runs: string[]; runs_meta?: RunMeta[] }>(baseUrl, "/api/runs");
-    setRuns(r.runs);
-    setRunsMeta(Array.isArray(r.runs_meta) ? r.runs_meta : []);
+  async function refreshRuns(opts?: { silentError?: boolean }) {
+    setBackendStatus("checking");
+    setBackendError("");
+    try {
+      const r = await api<{ runs: string[]; runs_meta?: RunMeta[] }>(baseUrl, "/api/runs");
+      setRuns(r.runs);
+      setRunsMeta(Array.isArray(r.runs_meta) ? r.runs_meta : []);
+      setBackendStatus("ok");
+      return r;
+    } catch (e) {
+      const msg = String(e);
+      setBackendStatus("error");
+      setBackendError(msg);
+      if (!opts?.silentError) {
+        setError(msg);
+      }
+      throw e;
+    }
   }
 
   async function loadRun(id: string) {
@@ -169,8 +201,16 @@ export default function App() {
   }
 
   useEffect(() => {
-    refreshRuns().catch((e) => setError(String(e)));
-  }, [baseUrl]);
+    if (!baseUrl.trim()) {
+      setBackendStatus("idle");
+      setBackendError("");
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      refreshRuns({ silentError: true }).catch(() => {});
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [baseUrl, apiToken]);
 
   useEffect(() => {
     api<{ modes: PdfMode[] }>(baseUrl, "/api/parsers/pdf")
@@ -375,10 +415,22 @@ export default function App() {
 
   async function startWorkflow(stages?: string[]) {
     if (!runId) return;
+    const options = state?.options ?? { classify_mode: "llm", allow_unreviewed: false, period_year: null, period_month: null };
+    const stageIds = stages ?? state?.stages?.map((s) => s.id) ?? [];
+    const includesClassify = !stages || stageIds.some((id) => id.includes("classify"));
+    if (includesClassify && options.classify_mode === "llm") {
+      const ok = await confirm({
+        title: "确认运行分类阶段？",
+        description: "当前分类模式为 LLM，可能产生费用。",
+        confirmText: "继续运行",
+        cancelText: "取消",
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     setError("");
     try {
-      const options = state?.options ?? { classify_mode: "llm", allow_unreviewed: false, period_year: null, period_month: null };
       await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -393,6 +445,14 @@ export default function App() {
 
   async function cancelRun() {
     if (!runId) return;
+    const ok = await confirm({
+      title: "确认停止当前任务？",
+      description: "停止后需要重新运行才能继续生成产物。",
+      confirmText: "确认停止",
+      cancelText: "取消",
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {
@@ -406,6 +466,14 @@ export default function App() {
 
   async function resetClassify() {
     if (!runId) return;
+    const ok = await confirm({
+      title: "确认重置分类产物？",
+      description: "将清空本次任务的分类产物，需要重新运行分类阶段。",
+      confirmText: "确认重置",
+      cancelText: "取消",
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {
@@ -447,7 +515,7 @@ export default function App() {
       try {
         const res = await fetch(downloadHref(file.path));
         const text = await res.text();
-        setTextPreview(text.length > 400_000 ? text.slice(0, 400_000) + "\n\n...(truncated)..." : text);
+        setTextPreview(text.length > 400_000 ? text.slice(0, 400_000) + "\n\n...(已截断)..." : text);
       } catch (e) {
         setPreviewError(String(e));
       }
@@ -467,12 +535,22 @@ export default function App() {
 
   async function saveConfigObject(next: unknown) {
     if (!runId) return;
-    setBusy(true);
-    setError("");
     try {
       if (!cfgSaveToRun && !cfgSaveToGlobal) {
         throw new Error("请至少选择一个保存目标：本次任务 / 默认配置。");
       }
+      if (cfgSaveToGlobal) {
+        const ok = await confirm({
+          title: "确认保存为默认配置？",
+          description: "将写入全局 config/classifier.local.json，影响后续新任务。取消将不保存。",
+          confirmText: "确认保存",
+          cancelText: "取消",
+          tone: "danger",
+        });
+        if (!ok) return;
+      }
+      setBusy(true);
+      setError("");
       if (cfgSaveToRun) {
         await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/config/classifier`, {
           method: "PUT",
@@ -579,6 +657,16 @@ export default function App() {
       ? [reviewSelectedTxnId].map((x) => String(x ?? "").trim()).filter(Boolean)
       : bulkEffectiveTxnIds;
     if (!txnIds.length) return;
+    if (txnIds.length >= 100) {
+      const ok = await confirm({
+        title: "确认批量应用？",
+        description: `将应用到 ${txnIds.length} 条记录。`,
+        confirmText: "确认应用",
+        cancelText: "取消",
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
 
     if (!bulkIgnored && !bulkCategoryId.trim()) {
       setError("请先选择分类（或切换为“不记账”）。");
@@ -676,6 +764,21 @@ export default function App() {
     }
   }
 
+  async function onAllowUnreviewedChange(next: boolean) {
+    if (!runId) return;
+    if (next) {
+      const ok = await confirm({
+        title: "确认允许跳过人工复核？",
+        description: "开启后将直接产出最终结果，可能遗漏分类错误。",
+        confirmText: "仍然开启",
+        cancelText: "取消",
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    await saveOptions({ allow_unreviewed: next });
+  }
+
   async function saveReviewEdits() {
     if (!runId) return;
     const updates = Object.entries(reviewEdits).map(([txn_id, patch]) => ({ txn_id, ...patch }));
@@ -702,12 +805,12 @@ export default function App() {
     if (!name) return;
     const id = (newCategoryId.trim() || suggestCategoryId(name)).trim();
     if (!id) {
-      setError("Category id is empty.");
+      setError("分类 ID 不能为空。");
       return;
     }
     const cfg = config ?? (configText ? JSON.parse(configText) : null);
     if (!cfg || typeof cfg !== "object") {
-      setError("Missing classifier config; please Load a run first.");
+      setError("缺少分类器配置，请先加载任务。");
       return;
     }
 
@@ -746,6 +849,20 @@ export default function App() {
 
     const matches = rulePreview.matches;
     if (!matches.length) return;
+    if (matches.length >= 50 || ruleOverwriteFinal || ruleSaveToGlobal) {
+      const notes: string[] = [];
+      if (ruleOverwriteFinal) notes.push("覆盖已填写的最终结果");
+      if (ruleSaveToGlobal) notes.push("写入全局默认配置");
+      const extra = notes.length ? `，并${notes.join("、")}` : "";
+      const ok = await confirm({
+        title: "确认应用快速规则？",
+        description: `将应用到 ${matches.length} 条记录${extra}。`,
+        confirmText: "确认应用",
+        cancelText: "取消",
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
 
     setBusy(true);
     setError("");
@@ -765,7 +882,7 @@ export default function App() {
           if (!categoryId) throw new Error("请选择分类（final_category_id）。");
           const cats = Array.isArray(next.categories) ? next.categories : [];
           const categoryExists = cats.some((c: any) => String(c?.id ?? "") === categoryId);
-          if (!categoryExists) throw new Error(`Category id not found in config: ${categoryId}`);
+          if (!categoryExists) throw new Error(`配置中未找到分类 ID：${categoryId}`);
           const rules = Array.isArray(next.regex_category_rules) ? next.regex_category_rules : [];
           const exists = rules.some((r: any) =>
             String(r?.category_id ?? "") === categoryId
@@ -812,7 +929,7 @@ export default function App() {
       };
 
       if (ruleSaveToConfig) {
-        if (!runCfg) throw new Error("Missing classifier config; please Load a run first.");
+        if (!runCfg) throw new Error("缺少分类器配置，请先加载任务。");
         const nextRunCfg = patchConfig(runCfg);
         await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/config/classifier`, {
           method: "PUT",
@@ -831,7 +948,7 @@ export default function App() {
           const hasCat = cats.some((c: any) => String(c?.id ?? "") === categoryId);
           if (!hasCat) {
             const fromRun = runCfg?.categories?.find((c: any) => String(c?.id ?? "") === categoryId);
-            if (!fromRun) throw new Error(`Global config missing category: ${categoryId}`);
+            if (!fromRun) throw new Error(`全局配置缺少分类 ID：${categoryId}`);
             globalBase = { ...globalBase, categories: [...cats, { id: String(fromRun.id), name: String(fromRun.name ?? fromRun.id) }] };
           }
         }
@@ -897,7 +1014,7 @@ export default function App() {
     setRuleOverwriteFinal, setRuleSaveToConfig, setRuleSaveToGlobal, setRuleNote,
     setNewCategoryName, setNewCategoryId,
     setError,
-    loadReview, saveReviewEdits, applyBulkLocal, applyQuickRule, addCategory,
+    loadReview, saveReviewEdits, applyBulkLocal, applyQuickRule, addCategory, requestCloseReview,
 
     // Derived
     categories, filteredReviewRows, filteredReviewTxnIds, selectedTxnIds, bulkEffectiveTxnIds,
@@ -910,7 +1027,7 @@ export default function App() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold tracking-tight">OpenLedger</h1>
           <div className="flex items-center gap-4">
-            <span className="text-xs text-muted-foreground font-mono">{runId || "No Run Selected"}</span>
+            <span className="text-xs text-muted-foreground font-mono">{runId || "未选择任务"}</span>
             {runName ? (
               <span className="text-xs text-muted-foreground truncate max-w-[260px]" title={runName}>
                 {runName}
@@ -923,7 +1040,7 @@ export default function App() {
         {/* Top Control Bar */}
         <div className="flex flex-wrap items-center gap-4 p-4 border rounded-lg bg-card shadow-sm">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">Backend</span>
+            <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">后端</span>
             <Input
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
@@ -935,16 +1052,49 @@ export default function App() {
             <Input
               value={apiToken}
               onChange={(e) => setApiToken(e.target.value)}
-              placeholder="(optional)"
+              placeholder="（可选）"
               type="password"
               className="w-[180px] h-8 font-mono text-xs"
             />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => refreshRuns().catch(() => {})}
+              disabled={busy || backendStatus === "checking" || !baseUrl.trim()}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" />
+              测试连接
+            </Button>
+            <Badge
+              variant={
+                backendStatus === "error"
+                  ? "destructive"
+                  : backendStatus === "ok"
+                    ? "default"
+                    : backendStatus === "checking"
+                      ? "secondary"
+                      : "outline"
+              }
+              className="h-7"
+              title={backendStatus === "error" ? backendError : undefined}
+            >
+              {backendStatus === "checking"
+                ? "连接中…"
+                : backendStatus === "ok"
+                  ? "已连接"
+                  : backendStatus === "error"
+                    ? "连接失败"
+                    : "未检测"}
+            </Badge>
           </div>
           <Separator orientation="vertical" className="h-6" />
           <div className="flex items-center gap-2 flex-1">
             <Select value={runId} onValueChange={setRunId}>
               <SelectTrigger className="w-[240px] h-8 font-mono text-xs">
-                <SelectValue placeholder="Select Run" />
+                <SelectValue placeholder="选择任务" />
               </SelectTrigger>
               <SelectContent>
                 {runs.map((r) => (
@@ -958,7 +1108,14 @@ export default function App() {
                 ))}
               </SelectContent>
             </Select>
-            <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => refreshRuns().catch((e) => setError(String(e)))} disabled={busy}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={() => refreshRuns().catch(() => {})}
+              disabled={busy}
+              title="刷新任务列表"
+            >
               <RefreshCw className="h-3.5 w-3.5" />
             </Button>
             <Input
@@ -969,7 +1126,7 @@ export default function App() {
               disabled={busy}
             />
             <Button size="sm" className="h-8" onClick={onCreateRun} disabled={busy}>
-              <Play className="mr-2 h-3.5 w-3.5" /> New Run
+              <Play className="mr-2 h-3.5 w-3.5" /> 新建任务
             </Button>
           </div>
           {runStatus && (
@@ -981,6 +1138,48 @@ export default function App() {
         </div>
 
         {error && <div className="text-sm text-destructive flex items-center gap-2 p-2 border border-destructive/20 bg-destructive/10 rounded-md"><AlertCircle className="h-4 w-4" /> {error}</div>}
+
+        {state?.status === "needs_review" ? (
+          <Card className="border-amber-300/60 bg-amber-50/60">
+            <CardHeader className="py-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-500" />
+                需要人工复核
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="py-3 flex flex-wrap items-center gap-3">
+              <div className="text-sm text-muted-foreground">
+                检测到待复核记录 {reviewPendingCount} 条。
+              </div>
+              <Button size="sm" onClick={() => void openReview()} disabled={!runId || busy}>
+                加载并打开人工复核
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {!runId ? (
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-base">快速开始</CardTitle>
+            </CardHeader>
+            <CardContent className="py-3 text-sm text-muted-foreground space-y-1">
+              <div>1. 设置后端地址并测试连接</div>
+              <div>2. 新建任务</div>
+              <div>3. 上传 PDF/CSV/XLSX 文件</div>
+              <div>4. 运行流程</div>
+            </CardContent>
+          </Card>
+        ) : !state?.inputs?.length ? (
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-base">下一步</CardTitle>
+            </CardHeader>
+            <CardContent className="py-3 text-sm text-muted-foreground">
+              请上传 PDF/CSV/XLSX 文件以开始处理。
+            </CardContent>
+          </Card>
+        ) : null}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column: Pipeline Stages */}
@@ -1003,7 +1202,7 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Card>
                 <CardHeader className="py-3">
-                  <CardTitle className="text-base">Uploads</CardTitle>
+                  <CardTitle className="text-base">上传</CardTitle>
                 </CardHeader>
                 <CardContent className="py-3">
                   <div className="flex items-center gap-2">
@@ -1017,13 +1216,19 @@ export default function App() {
                   </div>
                   {state?.inputs?.length ? (
                     <div className="mt-2 text-xs text-muted-foreground">
-                      {state.inputs.length} files uploaded
+                      已上传 {state.inputs.length} 个文件
                     </div>
                   ) : null}
                 </CardContent>
               </Card>
 
-              <SettingsCard state={state} pdfModes={pdfModes} busy={busy} saveOptions={saveOptions} />
+              <SettingsCard
+                state={state}
+                pdfModes={pdfModes}
+                busy={busy}
+                saveOptions={saveOptions}
+                onAllowUnreviewedChange={onAllowUnreviewedChange}
+              />
             </div>
 
             {/* Preview Area */}
@@ -1093,7 +1298,7 @@ export default function App() {
               <Collapsible>
                 <CollapsibleTrigger asChild>
                   <Button variant="outline" size="sm" className="w-full justify-between">
-                    Manual Review
+                    人工复核
                     <CheckCircle2 className="h-3 w-3 opacity-50" />
                   </Button>
                 </CollapsibleTrigger>
@@ -1101,16 +1306,16 @@ export default function App() {
                   <Card>
                     <CardContent className="p-3 space-y-2">
                       <div className="flex items-center gap-2">
-                        <Button size="sm" variant="outline" onClick={() => void loadReview()} disabled={!runId || busy}>Load</Button>
-                        <Button size="sm" onClick={() => void openReview()} disabled={!runId || busy}>Open</Button>
+                        <Button size="sm" variant="outline" onClick={() => void loadReview()} disabled={!runId || busy}>加载</Button>
+                        <Button size="sm" onClick={() => void openReview()} disabled={!runId || busy}>打开</Button>
                         <Badge variant="outline" className="h-7 text-[10px] font-mono">
-                          pending {reviewPendingCount}
+                          待复核 {reviewPendingCount}
                         </Badge>
                         <Badge variant="outline" className="h-7 text-[10px] font-mono">
-                          edited {Object.keys(reviewEdits).length}
+                          已编辑 {Object.keys(reviewEdits).length}
                         </Badge>
                         <Badge variant="outline" className="h-7 text-[10px] font-mono ml-auto">
-                          loaded {reviewRows.length}
+                          已加载 {reviewRows.length}
                         </Badge>
                       </div>
                       <div className="text-[11px] text-muted-foreground">
@@ -1128,6 +1333,7 @@ export default function App() {
       <ReviewContext.Provider value={reviewContextValue}>
         <ReviewModal />
       </ReviewContext.Provider>
+      {dialog}
     </div>
   );
 }
