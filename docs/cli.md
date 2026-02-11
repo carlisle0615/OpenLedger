@@ -1,0 +1,27 @@
+# 命令行流水线
+
+适用于手动跑通各阶段、排查阶段产物或做离线调试。
+
+## 推荐顺序
+
+```bash
+uv run python -m stages.extract_pdf --mode auto *.pdf
+uv run python -m stages.extract_exports
+uv run python -m stages.match_credit_card
+uv run python -m stages.match_bank
+uv run python -m stages.build_unified
+node stages/classify_llm.mjs
+uv run python -m stages.finalize
+```
+
+## PDF 解析模式
+
+- `--list-modes`：查看支持的解析器列表
+- `--mode cmb`：强制使用“招商银行（信用卡对账单/交易流水）”解析器
+
+## 分类阶段（LLM）
+
+- 分类规则默认在 `config/classifier.json`
+- 推荐本地覆盖 `config/classifier.local.json`（避免误提交）
+- `lsp` 字段说明见 `docs/lsp.md`
+- 首次使用 LSP：在仓库根目录执行 `pnpm install` 安装依赖

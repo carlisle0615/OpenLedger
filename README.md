@@ -27,6 +27,7 @@ OpenLedger 采用 **File as State**：你把 PDF/CSV/XLSX 导出放进输入目�
 文档：
 - 架构说明：`docs/architecture.md`
 - 方案思路：`docs/strategy.zh-CN.md`
+- 命令行流水线：`docs/cli.md`
 
 ## 特性
 
@@ -44,7 +45,18 @@ OpenLedger 采用 **File as State**：你把 PDF/CSV/XLSX 导出放进输入目�
 uv sync
 ```
 
-### Docker Compose（本地一键启动）
+### 2) 配置 LLM Provider 与 Key（必做）
+
+在 `config/classifier.local.json` 中配置 `lsp`（建议本地覆盖，避免误提交），并在环境变量里设置 API Key：
+
+```bash
+# 例：OpenRouter
+export OPENROUTER_API_KEY=your_key
+```
+
+`lsp` 的 Provider / model / base_url 等字段说明见 `docs/lsp.md`。
+
+### 3) Docker Compose（本地一键启动）
 
 ```bash
 docker compose up --build
@@ -54,7 +66,7 @@ docker compose up --build
 - 后端：`http://127.0.0.1:8000`
 - 前端：`http://127.0.0.1:5173`
 
-### 2) 启动 Workflow UI
+### 4) 启动 Workflow UI
 
 后端（自动打开 `http://127.0.0.1:8000`）：
 
@@ -72,7 +84,7 @@ pnpm dev
 
 打开 `http://127.0.0.1:5173`，上传 PDF + 微信/支付宝导出，执行全流程。
 
-### 3) PDF 与导出文件准备
+### 5) PDF 与导出文件准备
 
 当前适配：
 - 微信：`微信支付账单流水文件*.xlsx`
@@ -93,28 +105,7 @@ UI 支持：
 
 ## 命令行流水线
 
-推荐顺序：
-
-```bash
-uv run python -m stages.extract_pdf --mode auto *.pdf
-uv run python -m stages.extract_exports
-uv run python -m stages.match_credit_card
-uv run python -m stages.match_bank
-uv run python -m stages.build_unified
-node stages/classify_llm.mjs
-uv run python -m stages.finalize
-```
-
-PDF 解析模式：
-- `--list-modes`：查看支持的解析器列表
-- `--mode cmb`：强制使用“招商银行（信用卡对账单/交易流水）”解析器
-
-分类阶段：
-- 分类规则放在 `config/classifier.json`
-- 推荐本地覆盖 `config/classifier.local.json`（避免误提交）
-- 分类器 LSP 配置见 `lsp` 字段（Provider / API Key / base_url 等），细节参考 `docs/lsp.md`
-- LSP 可自配：默认脚本基于 LangChain，可选择不同 Provider（OpenRouter / Ollama / Tongyi / DeepSeek / Kimi / MiniMax）
-- 首次使用 LSP：在仓库根目录执行 `pnpm install` 安装依赖
+如需手动跑流水线或排查阶段产物，请参考：`docs/cli.md`。
 
 ## 输出产物（摘要）
 
