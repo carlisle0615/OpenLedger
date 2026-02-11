@@ -78,6 +78,7 @@ def init_run_state(run_id: str) -> dict[str, Any]:
             "period_day": 20,
             "period_year": now_local.year,
             "period_month": now_local.month,
+            "profile_id": "",
         },
         "current_stage": None,
         "stages": [

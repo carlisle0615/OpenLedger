@@ -25,6 +25,8 @@ interface HeaderBarProps {
     runName: string;
     refreshRuns: () => Promise<any>;
     onCreateRun: (name: string) => Promise<void>;
+    activeView: "workspace" | "profiles";
+    setActiveView: (v: "workspace" | "profiles") => void;
 }
 
 export function HeaderBar({
@@ -33,12 +35,31 @@ export function HeaderBar({
     runs, runId, setRunId, runsMeta, newRunName, setNewRunName,
     busy, runStatus, runName,
     refreshRuns, onCreateRun,
+    activeView, setActiveView,
 }: HeaderBarProps) {
     return (
         <>
             <div className="flex items-center justify-between">
                 <h1 className="text-2xl font-semibold tracking-tight">OpenLedger</h1>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 rounded-md border bg-card p-1">
+                        <Button
+                            size="sm"
+                            variant={activeView === "workspace" ? "default" : "ghost"}
+                            className="h-7 px-3 text-xs"
+                            onClick={() => setActiveView("workspace")}
+                        >
+                            工作台
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant={activeView === "profiles" ? "default" : "ghost"}
+                            className="h-7 px-3 text-xs"
+                            onClick={() => setActiveView("profiles")}
+                        >
+                            用户
+                        </Button>
+                    </div>
                     <span className="text-xs text-muted-foreground font-mono">{runId || "未选择任务"}</span>
                     {runName ? (
                         <span className="text-xs text-muted-foreground truncate max-w-[260px]" title={runName}>

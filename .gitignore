@@ -16,6 +16,7 @@ private/
 output/
 tmp/
 runs/
+profiles.db
 
 # Frontend
 web/node_modules/

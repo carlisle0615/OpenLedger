@@ -19,6 +19,16 @@ from .config import global_classifier_write_path, resolve_global_classifier_conf
 from .files import safe_filename
 from .logger import get_logger
 from .parsers.pdf import list_pdf_modes
+from .profiles import (
+    add_bill_from_run,
+    check_profile_integrity,
+    create_profile,
+    list_profiles,
+    load_profile,
+    remove_bills,
+    reimport_bill,
+    update_profile,
+)
 from .settings import load_settings
 from .state import resolve_under_root
 from .workflow import (
@@ -385,11 +395,37 @@ def make_handler(server: WorkflowHTTPServer):
                 _send_json(self, 200, {"runs": runs, "runs_meta": meta})
                 return
 
+            if path == "/api/profiles":
+                _send_json(self, 200, {"profiles": list_profiles(root)})
+                return
+
             m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)", path)
             if m:
                 run_id = m.group("run_id")
                 paths = make_paths(root, run_id)
                 _send_json(self, 200, get_state(paths))
+                return
+
+            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)", path)
+            if m:
+                profile_id = m.group("profile_id")
+                try:
+                    profile = load_profile(root, profile_id)
+                except FileNotFoundError:
+                    _send_json(self, 404, {"error": "profile not found"})
+                    return
+                _send_json(self, 200, profile)
+                return
+
+            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)/check", path)
+            if m:
+                profile_id = m.group("profile_id")
+                try:
+                    result = check_profile_integrity(root, profile_id)
+                except FileNotFoundError:
+                    _send_json(self, 404, {"error": "profile not found"})
+                    return
+                _send_json(self, 200, result)
                 return
 
             m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/artifacts", path)
@@ -670,6 +706,87 @@ def make_handler(server: WorkflowHTTPServer):
                 _send_json(self, 200, get_state(paths))
                 return
 
+            if path == "/api/profiles":
+                payload = _parse_json(self)
+                if not isinstance(payload, dict):
+                    _send_json(self, 400, {"error": "payload must be json object"})
+                    return
+                name = str(payload.get("name") or "").strip()
+                if not name:
+                    _send_json(self, 400, {"error": "missing name"})
+                    return
+                profile = create_profile(root, name)
+                _send_json(self, 200, profile)
+                return
+
+            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)/bills", path)
+            if m:
+                profile_id = m.group("profile_id")
+                payload = _parse_json(self)
+                if not isinstance(payload, dict):
+                    _send_json(self, 400, {"error": "payload must be json object"})
+                    return
+                run_id = str(payload.get("run_id") or "").strip()
+                if not run_id:
+                    _send_json(self, 400, {"error": "missing run_id"})
+                    return
+                try:
+                    profile = add_bill_from_run(root, profile_id, run_id)
+                except FileNotFoundError:
+                    _send_json(self, 404, {"error": "profile or run not found"})
+                    return
+                except Exception as exc:
+                    _send_json(self, 400, {"error": str(exc)})
+                    return
+                _send_json(self, 200, profile)
+                return
+
+            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)/bills/remove", path)
+            if m:
+                profile_id = m.group("profile_id")
+                payload = _parse_json(self)
+                if not isinstance(payload, dict):
+                    _send_json(self, 400, {"error": "payload must be json object"})
+                    return
+                period_key = str(payload.get("period_key") or "").strip()
+                run_id = str(payload.get("run_id") or "").strip()
+                if not period_key and not run_id:
+                    _send_json(self, 400, {"error": "missing period_key or run_id"})
+                    return
+                try:
+                    profile = remove_bills(root, profile_id, period_key=period_key or None, run_id=run_id or None)
+                except FileNotFoundError:
+                    _send_json(self, 404, {"error": "profile not found"})
+                    return
+                except Exception as exc:
+                    _send_json(self, 400, {"error": str(exc)})
+                    return
+                _send_json(self, 200, profile)
+                return
+
+            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)/bills/reimport", path)
+            if m:
+                profile_id = m.group("profile_id")
+                payload = _parse_json(self)
+                if not isinstance(payload, dict):
+                    _send_json(self, 400, {"error": "payload must be json object"})
+                    return
+                period_key = str(payload.get("period_key") or "").strip()
+                run_id = str(payload.get("run_id") or "").strip()
+                if not period_key or not run_id:
+                    _send_json(self, 400, {"error": "missing period_key or run_id"})
+                    return
+                try:
+                    profile = reimport_bill(root, profile_id, period_key=period_key, run_id=run_id)
+                except FileNotFoundError as exc:
+                    _send_json(self, 404, {"error": str(exc)})
+                    return
+                except Exception as exc:
+                    _send_json(self, 400, {"error": str(exc)})
+                    return
+                _send_json(self, 200, profile)
+                return
+
             m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/upload", path)
             if m:
                 run_id = m.group("run_id")
@@ -945,6 +1062,21 @@ def make_handler(server: WorkflowHTTPServer):
                     f"已更新 options: {payload}"
                 )
                 _send_json(self, 200, {"ok": True})
+                return
+
+            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)", path)
+            if m:
+                profile_id = m.group("profile_id")
+                payload = _parse_json(self)
+                if not isinstance(payload, dict):
+                    _send_json(self, 400, {"error": "payload must be json object"})
+                    return
+                try:
+                    profile = update_profile(root, profile_id, payload)
+                except FileNotFoundError:
+                    _send_json(self, 404, {"error": "profile not found"})
+                    return
+                _send_json(self, 200, profile)
                 return
 
             _send_json(self, 404, {"error": "not found"})

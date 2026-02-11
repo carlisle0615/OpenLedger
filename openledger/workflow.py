@@ -12,6 +12,7 @@ from typing import Any
 
 from .config import resolve_global_classifier_config
 from .logger import get_logger
+from .profiles import add_bill_from_run
 from .state import (
     DEFAULT_STAGES,
     init_run_state,
@@ -66,6 +67,7 @@ def get_state(paths: Paths) -> dict[str, Any]:
     opts.setdefault("period_day", 20)
     opts.setdefault("period_year", None)
     opts.setdefault("period_month", None)
+    opts.setdefault("profile_id", "")
     state["options"] = opts
     return state
 
@@ -510,6 +512,32 @@ class WorkflowRunner:
             )
             save_state(paths, state)
             st_logger.info("阶段成功")
+
+            if stage_id == "finalize":
+                profile_id = str(state.get("options", {}).get("profile_id") or "").strip()
+                if profile_id:
+                    try:
+                        add_bill_from_run(self.root, profile_id, run_id)
+                        st_logger.info(f"已写入 profile 账单: {profile_id}")
+                        state = get_state(paths)
+                        state["profile_archive"] = {
+                            "status": "ok",
+                            "profile_id": profile_id,
+                            "run_id": run_id,
+                            "updated_at": utc_now_iso(),
+                        }
+                        save_state(paths, state)
+                    except Exception as exc:
+                        st_logger.warning(f"profile 账单写入失败: {exc}")
+                        state = get_state(paths)
+                        state["profile_archive"] = {
+                            "status": "failed",
+                            "profile_id": profile_id,
+                            "run_id": run_id,
+                            "error": str(exc),
+                            "updated_at": utc_now_iso(),
+                        }
+                        save_state(paths, state)
 
         state = get_state(paths)
         state["status"] = "succeeded"

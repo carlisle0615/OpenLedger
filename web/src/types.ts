@@ -16,6 +16,13 @@ export type RunState = {
     updated_at: string;
     cancel_requested: boolean;
     current_stage: string | null;
+    profile_archive?: {
+        status: "ok" | "failed";
+        profile_id: string;
+        run_id: string;
+        error?: string;
+        updated_at?: string;
+    };
     inputs: { name: string; path: string; size: number }[];
     options: {
         pdf_mode?: string;
@@ -24,6 +31,7 @@ export type RunState = {
         period_day?: number | null;
         period_year: number | null;
         period_month: number | null;
+        profile_id?: string;
     };
     stages: Stage[];
 };
@@ -62,4 +70,61 @@ export type CsvPreview = {
 
 export type PdfPreview = {
     page_count: number;
+};
+
+export type ProfileListItem = {
+    id: string;
+    name: string;
+    created_at: string;
+    updated_at: string;
+    bill_count: number;
+};
+
+export type ProfileBillTotals = {
+    sum_amount: number;
+    sum_expense: number;
+    sum_income: number;
+    sum_refund: number;
+    sum_transfer: number;
+    count: number;
+    net?: number;
+};
+
+export type ProfileBill = {
+    run_id: string;
+    period_key: string;
+    year: number | null;
+    month: number | null;
+    period_mode: string;
+    period_day: number;
+    period_start?: string;
+    period_end?: string;
+    period_label?: string;
+    cross_month?: boolean;
+    created_at: string;
+    updated_at: string;
+    outputs?: { summary_csv?: string; categorized_csv?: string };
+    totals?: ProfileBillTotals;
+    category_summary?: Record<string, string | number>[];
+};
+
+export type Profile = {
+    id: string;
+    name: string;
+    created_at: string;
+    updated_at: string;
+    bills: ProfileBill[];
+};
+
+export type ProfileIntegrityIssue = {
+    run_id: string;
+    period_key: string;
+    issue: string;
+    path?: string;
+};
+
+export type ProfileIntegrityResult = {
+    profile_id: string;
+    ok: boolean;
+    issues: ProfileIntegrityIssue[];
 };

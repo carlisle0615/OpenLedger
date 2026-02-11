@@ -1,0 +1,585 @@
+from __future__ import annotations
+
+import calendar
+import csv
+import json
+import re
+import secrets
+import sqlite3
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Any, Iterable
+
+from .state import load_json, safe_rel_path, utc_now_iso
+
+
+def _db_path(root: Path) -> Path:
+    return root / "profiles.db"
+
+
+def _connect(root: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(_db_path(root))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def _init_db(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS profiles (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at TEXT,
+            updated_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            period_key TEXT,
+            year INTEGER,
+            month INTEGER,
+            period_mode TEXT,
+            period_day INTEGER,
+            period_start TEXT,
+            period_end TEXT,
+            period_label TEXT,
+            cross_month INTEGER,
+            created_at TEXT,
+            updated_at TEXT,
+            outputs_json TEXT,
+            totals_json TEXT,
+            category_summary_json TEXT,
+            UNIQUE(profile_id, run_id),
+            FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bills_profile_period ON bills(profile_id, period_key)"
+    )
+
+
+def _slugify(value: str) -> str:
+    s = str(value or "").strip().lower()
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^a-z0-9_]", "", s)
+    return s.strip("_")
+
+
+def _new_profile_id(name: str) -> str:
+    base = _slugify(name)
+    suffix = secrets.token_hex(3)
+    if base:
+        return f"{base}_{suffix}"
+    return f"profile_{suffix}"
+
+
+def _to_int(value: Any) -> int | None:
+    try:
+        v = int(value)
+    except Exception:
+        return None
+    return v
+
+
+def _to_float(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+        s = str(value).strip()
+        if s == "":
+            return 0.0
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def _json_loads(value: Any, default: Any) -> Any:
+    if value is None or value == "":
+        return default
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _extract_period(state: dict[str, Any]) -> tuple[int | None, int | None, str, int, str]:
+    opts = state.get("options", {}) if isinstance(state.get("options"), dict) else {}
+    year = _to_int(opts.get("period_year"))
+    month = _to_int(opts.get("period_month"))
+    mode = str(opts.get("period_mode") or "billing").strip() or "billing"
+    day = _to_int(opts.get("period_day")) or 20
+
+    if not year or not month:
+        created_at = str(state.get("created_at") or "")
+        try:
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            year = year or dt.year
+            month = month or dt.month
+        except Exception:
+            pass
+
+    period_key = f"{year:04d}-{month:02d}" if year and month else ""
+    return year, month, period_key, day, mode
+
+
+def _calc_period_range(
+    year: int | None,
+    month: int | None,
+    mode: str,
+    day: int,
+) -> tuple[date | None, date | None, str]:
+    if not year or not month:
+        return None, None, ""
+    if mode == "calendar":
+        last_day = calendar.monthrange(year, month)[1]
+        start_date = date(year, month, 1)
+        end_date = date(year, month, last_day)
+        label = f"{year:04d}-{month:02d} 自然月"
+        return start_date, end_date, label
+    start_year, start_month = (year - 1, 12) if month == 1 else (year, month - 1)
+    prev_last_day = calendar.monthrange(start_year, start_month)[1]
+    end_last_day = calendar.monthrange(year, month)[1]
+    prev_end_day = min(day, prev_last_day)
+    end_day = min(day, end_last_day)
+    prev_end_date = date(start_year, start_month, prev_end_day)
+    start_date = prev_end_date + timedelta(days=1)
+    end_date = date(year, month, end_day)
+    label = f"{year:04d}-{month:02d} 账期({day}日)"
+    return start_date, end_date, label
+
+
+def _read_category_summary(path: Path) -> tuple[dict[str, float], list[dict[str, Any]]]:
+    if not path.exists():
+        return {}, []
+    totals = {
+        "sum_amount": 0.0,
+        "sum_expense": 0.0,
+        "sum_income": 0.0,
+        "sum_refund": 0.0,
+        "sum_transfer": 0.0,
+        "count": 0.0,
+    }
+    categories: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            cat = {
+                "category_id": str(row.get("category_id", "")).strip(),
+                "category_name": str(row.get("category_name", "")).strip(),
+                "count": _to_float(row.get("count")),
+                "sum_amount": _to_float(row.get("sum_amount")),
+                "sum_expense": _to_float(row.get("sum_expense")),
+                "sum_income": _to_float(row.get("sum_income")),
+                "sum_refund": _to_float(row.get("sum_refund")),
+                "sum_transfer": _to_float(row.get("sum_transfer")),
+            }
+            categories.append(cat)
+            for key in totals:
+                totals[key] += float(cat.get(key, 0.0))
+    totals["net"] = totals.get("sum_amount", 0.0)
+    return totals, categories
+
+
+def _csv_has_header(path: Path) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+            reader = csv.reader(f)
+            row = next(reader, [])
+        return any(str(cell).strip() for cell in row)
+    except Exception:
+        return False
+
+
+def _validate_final_outputs(summary_path: Path, categorized_path: Path) -> None:
+    missing: list[str] = []
+    empty: list[str] = []
+
+    if not summary_path.exists():
+        missing.append("category.summary.csv")
+    elif not _csv_has_header(summary_path):
+        empty.append("category.summary.csv")
+
+    if not categorized_path.exists():
+        missing.append("unified.transactions.categorized.csv")
+    elif not _csv_has_header(categorized_path):
+        empty.append("unified.transactions.categorized.csv")
+
+    if missing or empty:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing={','.join(missing)}")
+        if empty:
+            details.append(f"empty={','.join(empty)}")
+        raise ValueError("finalize outputs incomplete: " + "; ".join(details))
+
+
+def _rows(conn: sqlite3.Connection, sql: str, args: Iterable[Any] = ()) -> list[sqlite3.Row]:
+    cur = conn.execute(sql, tuple(args))
+    return list(cur.fetchall())
+
+
+def list_profiles(root: Path) -> list[dict[str, Any]]:
+    with _connect(root) as conn:
+        _init_db(conn)
+        rows = _rows(
+            conn,
+            """
+            SELECT p.id, p.name, p.created_at, p.updated_at, COUNT(b.id) AS bill_count
+            FROM profiles p
+            LEFT JOIN bills b ON p.id = b.profile_id
+            GROUP BY p.id
+            ORDER BY p.created_at
+            """,
+        )
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+            "bill_count": r["bill_count"],
+        }
+        for r in rows
+    ]
+
+
+def create_profile(root: Path, name: str) -> dict[str, Any]:
+    profile_id = _new_profile_id(name)
+    now = utc_now_iso()
+    with _connect(root) as conn:
+        _init_db(conn)
+        conn.execute(
+            "INSERT INTO profiles(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (profile_id, str(name or "").strip()[:80], now, now),
+        )
+    return load_profile(root, profile_id)
+
+
+def load_profile(root: Path, profile_id: str) -> dict[str, Any]:
+    with _connect(root) as conn:
+        _init_db(conn)
+        row = conn.execute(
+            "SELECT id, name, created_at, updated_at FROM profiles WHERE id = ?",
+            (profile_id,),
+        ).fetchone()
+        if not row:
+            raise FileNotFoundError(profile_id)
+        bills = _rows(
+            conn,
+            """
+            SELECT * FROM bills
+            WHERE profile_id = ?
+            ORDER BY year, month, run_id
+            """,
+            (profile_id,),
+        )
+
+    out_bills: list[dict[str, Any]] = []
+    for b in bills:
+        out_bills.append(
+            {
+                "run_id": b["run_id"],
+                "period_key": b["period_key"],
+                "year": b["year"],
+                "month": b["month"],
+                "period_mode": b["period_mode"],
+                "period_day": b["period_day"],
+                "period_start": b["period_start"],
+                "period_end": b["period_end"],
+                "period_label": b["period_label"],
+                "cross_month": bool(b["cross_month"]),
+                "created_at": b["created_at"],
+                "updated_at": b["updated_at"],
+                "outputs": _json_loads(b["outputs_json"], {}),
+                "totals": _json_loads(b["totals_json"], {}),
+                "category_summary": _json_loads(b["category_summary_json"], []),
+            }
+        )
+
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "bills": out_bills,
+    }
+
+
+def update_profile(root: Path, profile_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    with _connect(root) as conn:
+        _init_db(conn)
+        row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+        if not row:
+            raise FileNotFoundError(profile_id)
+        if "name" in updates:
+            conn.execute(
+                "UPDATE profiles SET name = ?, updated_at = ? WHERE id = ?",
+                (str(updates.get("name") or "").strip()[:80], utc_now_iso(), profile_id),
+            )
+    return load_profile(root, profile_id)
+
+
+def build_bill_from_run(root: Path, run_id: str) -> dict[str, Any]:
+    run_dir = root / "runs" / run_id
+    state_path = run_dir / "state.json"
+    if not state_path.exists():
+        raise FileNotFoundError(f"run not found: {run_id}")
+    state = load_json(state_path)
+    year, month, period_key, period_day, period_mode = _extract_period(state)
+
+    out_dir = run_dir / "output"
+    summary_path = out_dir / "category.summary.csv"
+    categorized_path = out_dir / "unified.transactions.categorized.csv"
+
+    _validate_final_outputs(summary_path, categorized_path)
+
+    totals, categories = _read_category_summary(summary_path)
+
+    outputs = {
+        "summary_csv": safe_rel_path(root, summary_path) if summary_path.exists() else "",
+        "categorized_csv": safe_rel_path(root, categorized_path) if categorized_path.exists() else "",
+    }
+
+    period_start, period_end, period_label = _calc_period_range(year, month, period_mode, period_day)
+    cross_month = False
+    if period_start and period_end:
+        cross_month = (period_start.year, period_start.month) != (period_end.year, period_end.month)
+
+    bill = {
+        "run_id": run_id,
+        "period_key": period_key,
+        "year": year,
+        "month": month,
+        "period_mode": period_mode,
+        "period_day": period_day,
+        "period_start": period_start.isoformat() if period_start else "",
+        "period_end": period_end.isoformat() if period_end else "",
+        "period_label": period_label,
+        "cross_month": cross_month,
+        "created_at": str(state.get("created_at") or ""),
+        "updated_at": utc_now_iso(),
+        "outputs": outputs,
+        "totals": totals,
+        "category_summary": categories,
+    }
+    return bill
+
+
+def _upsert_bill(conn: sqlite3.Connection, profile_id: str, bill: dict[str, Any]) -> None:
+    conn.execute(
+        """
+        INSERT INTO bills(
+            profile_id, run_id, period_key, year, month, period_mode, period_day,
+            period_start, period_end, period_label, cross_month,
+            created_at, updated_at, outputs_json, totals_json, category_summary_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(profile_id, run_id) DO UPDATE SET
+            period_key=excluded.period_key,
+            year=excluded.year,
+            month=excluded.month,
+            period_mode=excluded.period_mode,
+            period_day=excluded.period_day,
+            period_start=excluded.period_start,
+            period_end=excluded.period_end,
+            period_label=excluded.period_label,
+            cross_month=excluded.cross_month,
+            updated_at=excluded.updated_at,
+            outputs_json=excluded.outputs_json,
+            totals_json=excluded.totals_json,
+            category_summary_json=excluded.category_summary_json
+        """,
+        (
+            profile_id,
+            bill.get("run_id"),
+            bill.get("period_key"),
+            bill.get("year"),
+            bill.get("month"),
+            bill.get("period_mode"),
+            bill.get("period_day"),
+            bill.get("period_start"),
+            bill.get("period_end"),
+            bill.get("period_label"),
+            1 if bill.get("cross_month") else 0,
+            bill.get("created_at"),
+            bill.get("updated_at"),
+            _json_dumps(bill.get("outputs") or {}),
+            _json_dumps(bill.get("totals") or {}),
+            _json_dumps(bill.get("category_summary") or []),
+        ),
+    )
+
+
+def add_bill_from_run(root: Path, profile_id: str, run_id: str) -> dict[str, Any]:
+    bill = build_bill_from_run(root, run_id)
+    now = utc_now_iso()
+
+    with _connect(root) as conn:
+        _init_db(conn)
+        row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+        if not row:
+            raise FileNotFoundError(profile_id)
+        bill["updated_at"] = now
+        if not bill.get("created_at"):
+            bill["created_at"] = now
+        _upsert_bill(conn, profile_id, bill)
+        conn.execute(
+            "UPDATE profiles SET updated_at = ? WHERE id = ?",
+            (now, profile_id),
+        )
+
+    return load_profile(root, profile_id)
+
+
+def remove_bills(
+    root: Path,
+    profile_id: str,
+    *,
+    period_key: str | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    if not period_key and not run_id:
+        raise ValueError("missing period_key or run_id")
+    with _connect(root) as conn:
+        _init_db(conn)
+        row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+        if not row:
+            raise FileNotFoundError(profile_id)
+        if period_key and run_id:
+            conn.execute(
+                "DELETE FROM bills WHERE profile_id = ? AND period_key = ? AND run_id = ?",
+                (profile_id, period_key, run_id),
+            )
+        elif period_key:
+            conn.execute(
+                "DELETE FROM bills WHERE profile_id = ? AND period_key = ?",
+                (profile_id, period_key),
+            )
+        elif run_id:
+            conn.execute(
+                "DELETE FROM bills WHERE profile_id = ? AND run_id = ?",
+                (profile_id, run_id),
+            )
+        conn.execute(
+            "UPDATE profiles SET updated_at = ? WHERE id = ?",
+            (utc_now_iso(), profile_id),
+        )
+    return load_profile(root, profile_id)
+
+
+def reimport_bill(
+    root: Path,
+    profile_id: str,
+    *,
+    period_key: str,
+    run_id: str,
+) -> dict[str, Any]:
+    if not period_key or not run_id:
+        raise ValueError("missing period_key or run_id")
+    bill = build_bill_from_run(root, run_id)
+    now = utc_now_iso()
+
+    with _connect(root) as conn:
+        _init_db(conn)
+        row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+        if not row:
+            raise FileNotFoundError(profile_id)
+        conn.execute(
+            "DELETE FROM bills WHERE profile_id = ? AND period_key = ?",
+            (profile_id, period_key),
+        )
+        bill["updated_at"] = now
+        if not bill.get("created_at"):
+            bill["created_at"] = now
+        _upsert_bill(conn, profile_id, bill)
+        conn.execute(
+            "UPDATE profiles SET updated_at = ? WHERE id = ?",
+            (now, profile_id),
+        )
+    return load_profile(root, profile_id)
+
+
+def check_profile_integrity(root: Path, profile_id: str) -> dict[str, Any]:
+    profile = load_profile(root, profile_id)
+    issues: list[dict[str, Any]] = []
+
+    for bill in profile.get("bills", []) or []:
+        run_id = str(bill.get("run_id") or "")
+        period_key = str(bill.get("period_key") or "")
+        if not period_key:
+            issues.append(
+                {
+                    "run_id": run_id,
+                    "period_key": period_key,
+                    "issue": "missing_period_key",
+                }
+            )
+        run_dir = root / "runs" / run_id
+        if not run_dir.exists():
+            issues.append(
+                {
+                    "run_id": run_id,
+                    "period_key": period_key,
+                    "issue": "missing_run_dir",
+                    "path": str(run_dir),
+                }
+            )
+            continue
+
+        outputs = bill.get("outputs") or {}
+        summary_rel = str(outputs.get("summary_csv") or "")
+        categorized_rel = str(outputs.get("categorized_csv") or "")
+        summary_path = (root / summary_rel) if summary_rel else run_dir / "output" / "category.summary.csv"
+        categorized_path = (root / categorized_rel) if categorized_rel else run_dir / "output" / "unified.transactions.categorized.csv"
+
+        if not summary_path.exists():
+            issues.append(
+                {
+                    "run_id": run_id,
+                    "period_key": period_key,
+                    "issue": "missing_summary_csv",
+                    "path": str(summary_path),
+                }
+            )
+        elif not _csv_has_header(summary_path):
+            issues.append(
+                {
+                    "run_id": run_id,
+                    "period_key": period_key,
+                    "issue": "empty_summary_csv",
+                    "path": str(summary_path),
+                }
+            )
+
+        if not categorized_path.exists():
+            issues.append(
+                {
+                    "run_id": run_id,
+                    "period_key": period_key,
+                    "issue": "missing_categorized_csv",
+                    "path": str(categorized_path),
+                }
+            )
+        elif not _csv_has_header(categorized_path):
+            issues.append(
+                {
+                    "run_id": run_id,
+                    "period_key": period_key,
+                    "issue": "empty_categorized_csv",
+                    "path": str(categorized_path),
+                }
+            )
+
+    return {"profile_id": profile_id, "ok": not issues, "issues": issues}

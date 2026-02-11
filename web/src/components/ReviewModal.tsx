@@ -34,6 +34,16 @@ import { Search, ListChecks, Plus, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fmtStatus, api, isCsvFile, isTextFile, parseBoolish, escapeRegExp, slugifyId, suggestCategoryId, type RuleMatchMode, type RuleMatchField, type RuleAction } from "@/utils/helpers";
 
+function fmtMoney(value: unknown) {
+  if (value === null || value === undefined) return "";
+  const raw = String(value).trim();
+  if (!raw) return "";
+  const cleaned = raw.replace(/[￥¥,]/g, "");
+  const num = Number(cleaned);
+  if (!Number.isFinite(num)) return raw;
+  return num.toFixed(2);
+}
+
 export function ReviewModal() {
   const {
     // State
@@ -409,7 +419,7 @@ export function ReviewModal() {
                             </div>
                           </TableCell>
                           <TableCell className="font-mono whitespace-nowrap py-1">{String(r.trade_date ?? "")}</TableCell>
-                          <TableCell className="font-mono whitespace-nowrap text-right py-1">{String(r.amount ?? "")}</TableCell>
+                          <TableCell className="font-mono whitespace-nowrap text-right py-1">{fmtMoney(r.amount)}</TableCell>
                           <TableCell className="truncate max-w-[220px] py-1" title={String(r.merchant ?? "")}>{String(r.merchant ?? "")}</TableCell>
                           <TableCell className="truncate max-w-[220px] py-1" title={String(r.item ?? "")}>{String(r.item ?? "")}</TableCell>
                           <TableCell className="py-1">
@@ -795,7 +805,7 @@ export function ReviewModal() {
                                   {rulePreview.matches.slice(0, 50).map((r, idx) => (
                                     <TableRow key={`${String(r.txn_id ?? "")}-${idx}`} className="h-8">
                                       <TableCell className="py-1 text-xs font-mono whitespace-nowrap">{String(r.trade_date ?? "")}</TableCell>
-                                      <TableCell className="py-1 text-xs font-mono whitespace-nowrap text-right">{String(r.amount ?? "")}</TableCell>
+                                      <TableCell className="py-1 text-xs font-mono whitespace-nowrap text-right">{fmtMoney(r.amount)}</TableCell>
                                       <TableCell className="py-1 text-xs truncate max-w-[220px]" title={String(r.merchant ?? "")}>{String(r.merchant ?? "")}</TableCell>
                                       <TableCell className="py-1 text-xs truncate max-w-[220px]" title={String(r.item ?? "")}>{String(r.item ?? "")}</TableCell>
                                     </TableRow>
