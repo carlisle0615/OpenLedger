@@ -126,14 +126,14 @@ export function HeaderBar({
                     {/* Run Selector */}
                     <div className="flex items-center gap-2">
                         <Select value={runId} onValueChange={setRunId}>
-                            <SelectTrigger className="w-[180px] h-8 text-xs bg-muted/30 border-dashed" title={runId || "未选择任务"}>
+                            <SelectTrigger className="w-[300px] h-8 text-xs bg-muted/30 border-dashed" title={runId || "未选择任务"}>
                                 <SelectValue placeholder="选择任务" />
                             </SelectTrigger>
                             <SelectContent>
                                 {runs.map((r) => (
                                     <SelectItem key={r} value={r} className="text-xs" title={r}>
                                         <div className="flex items-center gap-2">
-                                            <span className="font-mono text-xs truncate max-w-[120px]" title={r}>{r}</span>
+                                            <span className="font-mono text-xs truncate max-w-[180px]" title={r}>{r}</span>
                                             {(() => {
                                                 const name = String(runsMeta.find((m) => m.id === r)?.name ?? "").trim();
                                                 return name ? <span className="text-muted-foreground truncate max-w-[120px]" title={name}>{name}</span> : null;
