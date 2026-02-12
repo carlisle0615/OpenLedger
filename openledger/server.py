@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import json
 import mimetypes
 import os
-import re
 import shutil
 import threading
-import urllib.parse
 import webbrowser
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from time import perf_counter
+from typing import Literal, cast
+from uuid import uuid4
+
+import uvicorn
+from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from openpyxl import load_workbook
+from pdfplumber import open as pdf_open
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel, model_validator
+from pypdf import PdfReader
 
 from .capabilities import (
     get_capabilities_payload,
@@ -22,7 +31,7 @@ from .capabilities import (
 )
 from .config import global_classifier_write_path, resolve_global_classifier_config
 from .files import safe_filename
-from .logger import get_logger
+from .logger import current_request_id, get_logger, reset_request_id, set_request_id, setup_logging
 from .parsers.pdf import list_pdf_modes
 from .profiles import (
     add_bill_from_run,
@@ -37,7 +46,7 @@ from .profiles import (
     set_run_binding,
     update_profile,
 )
-from .settings import load_settings
+from .settings import Settings, load_settings
 from .state import resolve_under_root
 from .workflow import (
     WorkflowRunner,
@@ -51,27 +60,398 @@ from .workflow import (
 
 _PDF_RENDER_LOCK = threading.Lock()
 
-def _read_request_body(handler: BaseHTTPRequestHandler) -> bytes:
-    length = int(handler.headers.get("Content-Length", "0") or "0")
-    if length <= 0:
-        return b""
-    return handler.rfile.read(length)
+
+class RequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
-def _send_json(handler: BaseHTTPRequestHandler, status: int, obj: Any) -> None:
-    data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-    handler.send_response(status)
-    _set_cors(handler)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(data)))
-    handler.end_headers()
-    handler.wfile.write(data)
+class ResponseModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
 
 
-def _set_cors(handler: BaseHTTPRequestHandler) -> None:
-    handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS")
-    handler.send_header("Access-Control-Allow-Headers", "Content-Type")
+class JsonObjectPayload(RootModel[dict[str, JsonValue]]):
+    pass
+
+
+class ErrorResponse(ResponseModel):
+    error: str
+
+
+class HealthResponse(ResponseModel):
+    ok: bool
+
+
+class PdfModeItem(ResponseModel):
+    id: str
+    name: str
+
+
+class PdfModesResponse(ResponseModel):
+    modes: list[PdfModeItem]
+
+
+class ParserDetectSampleCheckModel(ResponseModel):
+    index: int
+    expected_kind: str
+    detected_kind: str
+    ok: bool
+
+
+class PdfParserHealthItemModel(ResponseModel):
+    mode_id: str
+    mode_name: str
+    status: Literal["ok", "warning", "error"]
+    kinds: list[str]
+    filename_hints: list[str]
+    sample_checks: list[ParserDetectSampleCheckModel]
+    warnings: list[str]
+    errors: list[str]
+
+
+class PdfParserHealthSummaryModel(ResponseModel):
+    total: int
+    ok: int
+    warning: int
+    error: int
+
+
+class PdfParserHealthResponseModel(ResponseModel):
+    summary: PdfParserHealthSummaryModel
+    parsers: list[PdfParserHealthItemModel]
+
+
+class SourceSupportItemModel(ResponseModel):
+    id: str
+    name: str
+    channel: str
+    file_types: list[str]
+    filename_hints: list[str]
+    stage: str
+    parser_mode: str
+    support_level: Literal["stable", "beta", "planned"]
+    notes: str
+
+
+class SourceSupportResponse(ResponseModel):
+    sources: list[SourceSupportItemModel]
+
+
+class CapabilitiesPayloadModel(ResponseModel):
+    generated_at: str
+    source_support_matrix: list[SourceSupportItemModel]
+    pdf_parser_health: PdfParserHealthResponseModel
+
+
+class RunMetaModel(ResponseModel):
+    id: str
+    name: str
+    status: str
+    created_at: str
+
+
+class RunsResponse(ResponseModel):
+    runs: list[str]
+    runs_meta: list[RunMetaModel]
+
+
+class RunBindingModel(ResponseModel):
+    run_id: str
+    profile_id: str
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class ProfileBindingResponse(ResponseModel):
+    run_id: str
+    binding: RunBindingModel | None
+
+
+class RunInputItemModel(ResponseModel):
+    name: str
+    path: str
+    size: int
+
+
+class StageStateModel(ResponseModel):
+    id: str
+    name: str
+    status: str
+    started_at: str
+    ended_at: str
+    log_path: str
+    error: str
+
+
+class ProfileArchiveStateModel(ResponseModel):
+    status: Literal["ok", "failed"]
+    profile_id: str
+    run_id: str
+    error: str | None = None
+    updated_at: str | None = None
+
+
+class RunOptionsStateModel(ResponseModel):
+    pdf_mode: str | None = None
+    classify_mode: Literal["llm", "dry_run"]
+    period_mode: Literal["billing", "calendar"] | None = None
+    period_day: int | None = None
+    period_year: int | None = None
+    period_month: int | None = None
+
+
+class RunStateResponse(ResponseModel):
+    run_id: str
+    name: str | None = None
+    status: str
+    created_at: str
+    updated_at: str
+    cancel_requested: bool
+    current_stage: str | None
+    profile_archive: ProfileArchiveStateModel | None = None
+    profile_binding: RunBindingModel | None = None
+    inputs: list[RunInputItemModel]
+    options: RunOptionsStateModel
+    stages: list[StageStateModel]
+
+
+class ArtifactItemModel(ResponseModel):
+    path: str
+    name: str
+    exists: bool = True
+    size: int | None = None
+
+
+class ArtifactsResponse(ResponseModel):
+    artifacts: list[ArtifactItemModel]
+
+
+class FileItemModel(ResponseModel):
+    path: str
+    name: str
+    exists: bool
+    size: int | None = None
+
+
+class StageIOResponse(ResponseModel):
+    stage_id: str
+    inputs: list[FileItemModel]
+    outputs: list[FileItemModel]
+
+
+class MatchReasonModel(ResponseModel):
+    reason: str
+    count: int
+
+
+class MatchStatsResponse(ResponseModel):
+    stage_id: str
+    matched: int
+    unmatched: int
+    total: int
+    match_rate: float
+    unmatched_reasons: list[MatchReasonModel]
+
+
+class CsvPreviewResponse(ResponseModel):
+    columns: list[str]
+    rows: list[dict[str, str]]
+    offset: int
+    limit: int
+    has_more: bool
+    next_offset: int | None
+    prev_offset: int | None
+
+
+class PdfPreviewMetaResponse(ResponseModel):
+    page_count: int
+
+
+class LogResponse(ResponseModel):
+    text: str
+
+
+class ProfilesResponse(ResponseModel):
+    profiles: list["ProfileListItemModel"]
+
+
+class ProfileListItemModel(ResponseModel):
+    id: str
+    name: str
+    created_at: str
+    updated_at: str
+    bill_count: int
+
+
+class ProfileBillTotalsModel(ResponseModel):
+    sum_amount: float
+    sum_expense: float
+    sum_income: float
+    sum_refund: float
+    sum_transfer: float
+    count: float
+    net: float | None = None
+
+
+class ProfileBillModel(ResponseModel):
+    run_id: str
+    period_key: str
+    year: int | None
+    month: int | None
+    period_mode: str
+    period_day: int
+    period_start: str | None = ""
+    period_end: str | None = ""
+    period_label: str | None = ""
+    cross_month: bool | None = False
+    created_at: str
+    updated_at: str
+    outputs: dict[str, str] = Field(default_factory=dict)
+    totals: ProfileBillTotalsModel | None = None
+    category_summary: list[dict[str, JsonValue]] = Field(default_factory=list)
+
+
+class ProfileModel(ResponseModel):
+    id: str
+    name: str
+    created_at: str
+    updated_at: str
+    bills: list[ProfileBillModel]
+
+
+class ProfileIntegrityIssueModel(ResponseModel):
+    run_id: str
+    period_key: str
+    issue: str
+    path: str | None = None
+
+
+class ProfileIntegrityResultModel(ResponseModel):
+    profile_id: str
+    ok: bool
+    issues: list[ProfileIntegrityIssueModel]
+
+
+class CreateRunPayload(RequestModel):
+    name: str = ""
+
+
+class CreateProfilePayload(RequestModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class AddBillPayload(RequestModel):
+    run_id: str = Field(min_length=1)
+    period_year: int | None = None
+    period_month: int | None = None
+
+
+class RemoveBillsPayload(RequestModel):
+    period_key: str | None = None
+    run_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_selector(self) -> "RemoveBillsPayload":
+        if not (self.period_key or self.run_id):
+            raise ValueError("missing period_key or run_id")
+        return self
+
+
+class ReimportBillPayload(RequestModel):
+    period_key: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+
+
+class RunOptionsPatch(RequestModel):
+    pdf_mode: str | None = None
+    classify_mode: Literal["llm", "dry_run"] | None = None
+    period_mode: Literal["billing", "calendar"] | None = None
+    period_day: int | None = None
+    period_year: int | None = None
+    period_month: int | None = None
+    profile_id: str | None = None
+
+
+class StartRunPayload(RequestModel):
+    stages: list[str] | None = None
+    options: RunOptionsPatch = Field(default_factory=RunOptionsPatch)
+
+
+class ResetPayload(RequestModel):
+    scope: Literal["classify"] = "classify"
+
+
+class ReviewUpdateItem(RequestModel):
+    txn_id: str = Field(min_length=1)
+    final_category_id: str | None = None
+    final_note: str | None = None
+    final_ignored: bool | None = None
+    final_ignore_reason: str | None = None
+
+
+class ReviewUpdatesPayload(RequestModel):
+    updates: list[ReviewUpdateItem]
+
+
+class ConfigWriteResponse(ResponseModel):
+    ok: bool
+
+
+class RunStartResponse(ResponseModel):
+    ok: bool
+    run_id: str
+
+
+class CancelResponse(ResponseModel):
+    ok: bool
+
+
+class ResetResponse(ResponseModel):
+    ok: bool
+    scope: str
+
+
+class ReviewUpdateResponse(ResponseModel):
+    ok: bool
+    updated: int
+
+
+class SetProfileBindingPayload(RequestModel):
+    profile_id: str = Field(min_length=1)
+
+
+class SetProfileBindingResponse(ResponseModel):
+    ok: bool
+    binding: RunBindingModel
+
+
+class UpdateProfilePayload(RequestModel):
+    name: str | None = Field(default=None, max_length=80)
+
+
+class UploadSavedItem(ResponseModel):
+    name: str
+    path: str
+    size: int
+
+
+class UploadResponse(ResponseModel):
+    saved: list[UploadSavedItem]
+
+
+class RunCreateResponse(RunStateResponse):
+    pass
+
+
+ProfilesResponse.model_rebuild()
+
+
+class WorkflowContext:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.runner = WorkflowRunner(root)
+        self.settings = load_settings()
+        setup_logging(self.settings)
+        self.logger = get_logger()
 
 
 def _preview_cache_path(run_dir: Path, rel_path: str, mtime: float, page: int, dpi: int) -> Path:
@@ -82,34 +462,175 @@ def _preview_cache_path(run_dir: Path, rel_path: str, mtime: float, page: int, d
     return cache_dir / f"pdf_{digest}_p{page}_d{dpi}.png"
 
 
-def _preview_xlsx(file_path: Path, limit: int, offset: int) -> dict[str, Any]:
-    from openpyxl import load_workbook
+def _read_json_object(path: Path) -> dict[str, JsonValue]:
+    raw_data = json.loads(path.read_text(encoding="utf-8"))
+    payload = JsonObjectPayload.model_validate(raw_data)
+    return payload.root
 
-    wb = load_workbook(file_path, read_only=True, data_only=True)
+
+def _state_with_binding(root: Path, run_id: str) -> RunStateResponse:
+    paths = make_paths(root, run_id)
+    state_payload = get_state(paths)
+    options_payload = dict(state_payload.get("options", {}))
+    options_payload.pop("profile_id", None)
+    state_payload["options"] = options_payload
     try:
-        ws = wb.active
-        rows_iter = ws.iter_rows(values_only=True)
+        state_payload["profile_binding"] = get_run_binding(root, run_id)
+    except FileNotFoundError:
+        state_payload["profile_binding"] = None
+    return RunStateResponse.model_validate(state_payload)
+
+
+def _file_item(run_dir: Path, file_path: Path) -> FileItemModel:
+    rel = str(file_path.resolve().relative_to(run_dir.resolve()))
+    if file_path.exists() and file_path.is_file():
+        size = file_path.stat().st_size
+    else:
+        size = None
+    return FileItemModel(path=rel, name=file_path.name, exists=file_path.exists(), size=size)
+
+
+def _glob_items(run_dir: Path, base: Path, pattern: str) -> list[FileItemModel]:
+    return [_file_item(run_dir, p) for p in sorted(base.glob(pattern)) if p.is_file()]
+
+
+def _one_item(run_dir: Path, p: Path) -> list[FileItemModel]:
+    return [_file_item(run_dir, p)]
+
+
+def _stage_io(root: Path, run_id: str, stage_id: str) -> StageIOResponse:
+    paths = make_paths(root, run_id)
+    run_dir = paths.run_dir
+    inputs_dir = paths.inputs_dir
+    out_dir = paths.out_dir
+    cfg_dir = paths.config_dir
+
+    if stage_id == "extract_pdf":
+        return StageIOResponse(
+            stage_id=stage_id,
+            inputs=_glob_items(run_dir, inputs_dir, "*.pdf"),
+            outputs=_glob_items(run_dir, out_dir, "*.transactions.csv"),
+        )
+
+    if stage_id == "extract_exports":
+        return StageIOResponse(
+            stage_id=stage_id,
+            inputs=_glob_items(run_dir, inputs_dir, "*.xlsx") + _glob_items(run_dir, inputs_dir, "*.csv"),
+            outputs=_one_item(run_dir, out_dir / "wechat.normalized.csv")
+            + _one_item(run_dir, out_dir / "alipay.normalized.csv"),
+        )
+
+    if stage_id == "match_credit_card":
+        cc_candidates = _glob_items(run_dir, out_dir, "*信用卡*.transactions.csv")
+        if not cc_candidates:
+            cc_candidates = _glob_items(run_dir, out_dir, "*.transactions.csv")
+        return StageIOResponse(
+            stage_id=stage_id,
+            inputs=cc_candidates[:1]
+            + _one_item(run_dir, out_dir / "wechat.normalized.csv")
+            + _one_item(run_dir, out_dir / "alipay.normalized.csv"),
+            outputs=_one_item(run_dir, out_dir / "credit_card.enriched.csv")
+            + _one_item(run_dir, out_dir / "credit_card.unmatched.csv")
+            + _one_item(run_dir, out_dir / "credit_card.match.xlsx")
+            + _one_item(run_dir, out_dir / "credit_card.match_debug.csv"),
+        )
+
+    if stage_id == "match_bank":
+        bank_candidates = _glob_items(run_dir, out_dir, "*交易流水*.transactions.csv")
+        if not bank_candidates:
+            bank_candidates = _glob_items(run_dir, out_dir, "*.transactions.csv")
+        return StageIOResponse(
+            stage_id=stage_id,
+            inputs=bank_candidates
+            + _one_item(run_dir, out_dir / "wechat.normalized.csv")
+            + _one_item(run_dir, out_dir / "alipay.normalized.csv"),
+            outputs=_one_item(run_dir, out_dir / "bank.enriched.csv")
+            + _one_item(run_dir, out_dir / "bank.unmatched.csv")
+            + _one_item(run_dir, out_dir / "bank.match.xlsx")
+            + _one_item(run_dir, out_dir / "bank.match_debug.csv"),
+        )
+
+    if stage_id == "build_unified":
+        return StageIOResponse(
+            stage_id=stage_id,
+            inputs=_one_item(run_dir, out_dir / "credit_card.enriched.csv")
+            + _one_item(run_dir, out_dir / "credit_card.unmatched.csv")
+            + _one_item(run_dir, out_dir / "bank.enriched.csv")
+            + _one_item(run_dir, out_dir / "bank.unmatched.csv")
+            + _one_item(run_dir, out_dir / "wechat.normalized.csv")
+            + _one_item(run_dir, out_dir / "alipay.normalized.csv"),
+            outputs=_one_item(run_dir, out_dir / "unified.transactions.csv")
+            + _one_item(run_dir, out_dir / "unified.transactions.xlsx")
+            + _one_item(run_dir, out_dir / "unified.transactions.all.csv")
+            + _one_item(run_dir, out_dir / "unified.transactions.all.xlsx"),
+        )
+
+    if stage_id == "classify":
+        classify_outputs = _glob_items(run_dir, out_dir / "classify", "**/*") if (out_dir / "classify").exists() else []
+        return StageIOResponse(
+            stage_id=stage_id,
+            inputs=_one_item(run_dir, out_dir / "unified.transactions.csv") + _one_item(run_dir, cfg_dir / "classifier.json"),
+            outputs=classify_outputs,
+        )
+
+    if stage_id == "finalize":
+        return StageIOResponse(
+            stage_id=stage_id,
+            inputs=_one_item(run_dir, out_dir / "classify" / "unified.with_id.csv")
+            + _one_item(run_dir, out_dir / "classify" / "review.csv")
+            + _one_item(run_dir, cfg_dir / "classifier.json"),
+            outputs=_one_item(run_dir, out_dir / "unified.transactions.categorized.csv")
+            + _one_item(run_dir, out_dir / "unified.transactions.categorized.xlsx")
+            + _one_item(run_dir, out_dir / "category.summary.csv")
+            + _one_item(run_dir, out_dir / "pending_review.csv"),
+        )
+
+    return StageIOResponse(stage_id=stage_id, inputs=[], outputs=[])
+
+
+def _count_csv_rows(path: Path, status_key: str = "match_status") -> tuple[int, dict[str, int]]:
+    if not path.exists() or not path.is_file():
+        return 0, {}
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        has_status = status_key in fieldnames
+        count = 0
+        reasons: dict[str, int] = {}
+        for row in reader:
+            count += 1
+            if not has_status:
+                continue
+            status_value = str(row.get(status_key, "") or "").strip() or "unknown"
+            reasons[status_value] = reasons.get(status_value, 0) + 1
+    return count, reasons
+
+
+def _preview_xlsx(file_path: Path, limit: int, offset: int) -> CsvPreviewResponse:
+    workbook = load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        sheet = workbook.active
+        rows_iter = sheet.iter_rows(values_only=True)
         header = next(rows_iter, None)
         if header is None:
-            return {
-                "columns": [],
-                "rows": [],
-                "offset": offset,
-                "limit": limit,
-                "has_more": False,
-                "next_offset": None,
-                "prev_offset": max(offset - limit, 0) if offset > 0 else None,
-            }
-        columns: list[str] = []
-        for i, h in enumerate(header):
-            if h is None or str(h).strip() == "":
-                columns.append(f"col_{i + 1}")
-            else:
-                columns.append(str(h))
+            return CsvPreviewResponse(
+                columns=[],
+                rows=[],
+                offset=offset,
+                limit=limit,
+                has_more=False,
+                next_offset=None,
+                prev_offset=max(offset - limit, 0) if offset > 0 else None,
+            )
 
-        rows: list[dict[str, Any]] = []
-        has_more = False
+        columns: list[str] = []
+        for idx, cell in enumerate(header):
+            text = "" if cell is None else str(cell).strip()
+            columns.append(text if text else f"col_{idx + 1}")
+
+        rows: list[dict[str, str]] = []
         seen = 0
+        has_more = False
         for row in rows_iter:
             if seen < offset:
                 seen += 1
@@ -117,1093 +638,667 @@ def _preview_xlsx(file_path: Path, limit: int, offset: int) -> dict[str, Any]:
             if len(rows) >= limit:
                 has_more = True
                 break
-            out: dict[str, Any] = {}
-            for i, col in enumerate(columns):
-                val = row[i] if i < len(row) else None
-                out[col] = "" if val is None else str(val)
-            rows.append(out)
+            parsed: dict[str, str] = {}
+            for idx, col in enumerate(columns):
+                val = row[idx] if idx < len(row) else None
+                parsed[col] = "" if val is None else str(val)
+            rows.append(parsed)
             seen += 1
-        return {
-            "columns": columns,
-            "rows": rows,
-            "offset": offset,
-            "limit": limit,
-            "has_more": has_more,
-            "next_offset": offset + limit if has_more else None,
-            "prev_offset": max(offset - limit, 0) if offset > 0 else None,
-        }
+
+        return CsvPreviewResponse(
+            columns=columns,
+            rows=rows,
+            offset=offset,
+            limit=limit,
+            has_more=has_more,
+            next_offset=offset + limit if has_more else None,
+            prev_offset=max(offset - limit, 0) if offset > 0 else None,
+        )
     finally:
-        wb.close()
+        workbook.close()
 
 
-def _count_csv_rows(path: Path, status_key: str = "match_status") -> tuple[int, dict[str, int]]:
-    import csv
+def _save_upload_files(paths_run_inputs: Path, files: list[UploadFile]) -> list[UploadSavedItem]:
+    paths_run_inputs.mkdir(parents=True, exist_ok=True)
 
-    if not path.exists() or not path.is_file():
-        return 0, {}
-    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
-        reader = csv.DictReader(f)
-        if reader.fieldnames is None:
-            return 0, {}
-        count = 0
-        reasons: dict[str, int] = {}
-        has_status = status_key in reader.fieldnames
-        for row in reader:
-            count += 1
-            if not has_status:
-                continue
-            status = str(row.get(status_key, "") or "").strip()
-            if not status:
-                status = "unknown"
-            reasons[status] = reasons.get(status, 0) + 1
-    return count, reasons
+    def pick_unique_name(name: str) -> str:
+        dst = paths_run_inputs / name
+        if not dst.exists():
+            return name
+        stem = Path(name).stem
+        suffix = Path(name).suffix
+        for index in range(1, 1000):
+            candidate = f"{stem}_{index}{suffix}"
+            if not (paths_run_inputs / candidate).exists():
+                return candidate
+        return f"{stem}_{os.getpid()}{suffix}"
 
-
-def _parse_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
-    raw = _read_request_body(handler)
-    if not raw:
-        return {}
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except Exception:
-        raise ValueError("invalid json body")
-
-
-def _state_with_binding(root: Path, run_id: str, state: dict[str, Any]) -> dict[str, Any]:
-    out = dict(state)
-    opts = out.get("options")
-    if isinstance(opts, dict) and "profile_id" in opts:
-        opts = dict(opts)
-        opts.pop("profile_id", None)
-        out["options"] = opts
-    try:
-        binding = get_run_binding(root, run_id)
-    except Exception:
-        binding = None
-    out["profile_binding"] = binding
-    return out
-
-
-_DISPOSITION_RE = re.compile(
-    r'form-data;\s*name="(?P<name>[^"]+)";\s*filename="(?P<filename>[^"]*)"'
-)
-
-
-def _parse_multipart(body: bytes, boundary: bytes) -> list[dict[str, Any]]:
-    # 极简 multipart 解析器（满足本地上传场景即可）。
-    out: list[dict[str, Any]] = []
-    delim = b"--" + boundary
-    for part in body.split(delim):
-        part = part.strip()
-        if not part or part == b"--":
+    saved: list[UploadSavedItem] = []
+    for upload in files:
+        if not upload.filename:
             continue
-        if part.startswith(b"\r\n"):
-            part = part[2:]
-        header_blob, _, content = part.partition(b"\r\n\r\n")
-        if not _:
-            continue
-        headers = {}
-        for line in header_blob.split(b"\r\n"):
-            if b":" not in line:
-                continue
-            k, v = line.split(b":", 1)
-            headers[k.decode("utf-8", "ignore").strip().lower()] = v.decode(
-                "utf-8", "ignore"
-            ).strip()
-        disp = headers.get("content-disposition", "")
-        m = _DISPOSITION_RE.search(disp)
-        if not m:
-            continue
-        name = m.group("name")
-        filename = m.group("filename")
-        # 去掉末尾 CRLF
-        if content.endswith(b"\r\n"):
-            content = content[:-2]
-        out.append(
-            {"name": name, "filename": filename, "content": content, "headers": headers}
+        safe_name = safe_filename(upload.filename, default="upload.bin")
+        target_name = pick_unique_name(safe_name)
+        target_path = paths_run_inputs / target_name
+        file_bytes = upload.file.read()
+        target_path.write_bytes(file_bytes)
+        saved.append(
+            UploadSavedItem(
+                name=target_name,
+                path=f"inputs/{target_name}",
+                size=target_path.stat().st_size,
+            )
         )
-    return out
+    return saved
 
 
-class WorkflowHTTPServer:
-    def __init__(self, root: Path) -> None:
-        self.root = root
-        self.runner = WorkflowRunner(root)
-        self.logger = get_logger()
-        self.settings = load_settings()
+def create_app(root: Path) -> FastAPI:
+    ctx = WorkflowContext(root)
 
+    app = FastAPI(title="OpenLedger API", version="1.0.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-def _file_item(run_dir: Path, file_path: Path) -> dict[str, Any]:
-    try:
-        rel = str(file_path.resolve().relative_to(run_dir.resolve()))
-    except Exception:
-        rel = str(file_path)
-    item: dict[str, Any] = {
-        "path": rel,
-        "name": file_path.name,
-        "exists": file_path.exists(),
-    }
-    if file_path.exists() and file_path.is_file():
-        item["size"] = file_path.stat().st_size
-    return item
+    def _extract_log_scope(path: str) -> tuple[str, str]:
+        parts = [seg for seg in path.split("/") if seg]
+        run_id = "-"
+        stage_id = "-"
+        if len(parts) >= 3 and parts[0] == "api" and parts[1] == "runs":
+            run_id = parts[2] or "-"
+        if len(parts) >= 5 and parts[0] == "api" and parts[1] == "runs" and parts[3] == "logs":
+            stage_id = parts[4] or "-"
+        if len(parts) >= 6 and parts[0] == "api" and parts[1] == "runs" and parts[3] == "stages":
+            stage_id = parts[4] or "-"
+        return run_id, stage_id
 
-
-def _stage_io(root: Path, run_id: str, stage_id: str) -> dict[str, Any]:
-    paths = make_paths(root, run_id)
-    run_dir = paths.run_dir
-    inputs_dir = paths.inputs_dir
-    out_dir = paths.out_dir
-    cfg_dir = paths.config_dir
-
-    def glob_items(base: Path, pattern: str) -> list[dict[str, Any]]:
-        return [
-            _file_item(run_dir, p) for p in sorted(base.glob(pattern)) if p.is_file()
-        ]
-
-    def one_item(p: Path) -> list[dict[str, Any]]:
-        return [_file_item(run_dir, p)]
-
-    if stage_id == "extract_pdf":
-        return {
-            "stage_id": stage_id,
-            "inputs": glob_items(inputs_dir, "*.pdf"),
-            "outputs": glob_items(out_dir, "*.transactions.csv"),
-        }
-
-    if stage_id == "extract_exports":
-        return {
-            "stage_id": stage_id,
-            "inputs": glob_items(inputs_dir, "*.xlsx")
-            + glob_items(inputs_dir, "*.csv"),
-            "outputs": one_item(out_dir / "wechat.normalized.csv")
-            + one_item(out_dir / "alipay.normalized.csv"),
-        }
-
-    if stage_id == "match_credit_card":
-        cc_candidates = glob_items(out_dir, "*信用卡*.transactions.csv") or glob_items(
-            out_dir, "*.transactions.csv"
+    def _request_logger(request: Request, request_id: str):
+        run_id, stage_id = _extract_log_scope(request.url.path)
+        return ctx.logger.bind(
+            request_id=request_id,
+            run_id=run_id,
+            stage_id=stage_id,
+            method=request.method,
+            path=request.url.path,
         )
-        cc_csv = cc_candidates[:1]
-        return {
-            "stage_id": stage_id,
-            "inputs": cc_csv
-            + one_item(out_dir / "wechat.normalized.csv")
-            + one_item(out_dir / "alipay.normalized.csv"),
-            "outputs": one_item(out_dir / "credit_card.enriched.csv")
-            + one_item(out_dir / "credit_card.unmatched.csv")
-            + one_item(out_dir / "credit_card.match.xlsx")
-            + one_item(out_dir / "credit_card.match_debug.csv"),
-        }
 
-    if stage_id == "match_bank":
-        bank_candidates = glob_items(
-            out_dir, "*交易流水*.transactions.csv"
-        ) or glob_items(out_dir, "*.transactions.csv")
-        return {
-            "stage_id": stage_id,
-            "inputs": bank_candidates
-            + one_item(out_dir / "wechat.normalized.csv")
-            + one_item(out_dir / "alipay.normalized.csv"),
-            "outputs": one_item(out_dir / "bank.enriched.csv")
-            + one_item(out_dir / "bank.unmatched.csv")
-            + one_item(out_dir / "bank.match.xlsx")
-            + one_item(out_dir / "bank.match_debug.csv"),
-        }
+    @app.middleware("http")
+    async def request_log_middleware(request: Request, call_next):
+        request_id = str(request.headers.get("x-request-id", "") or "").strip() or uuid4().hex[:16]
+        token = set_request_id(request_id)
+        started = perf_counter()
+        req_logger = _request_logger(request, request_id)
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (perf_counter() - started) * 1000
+            req_logger.bind(status_code=500).opt(exception=True).error(
+                f"request failed duration_ms={duration_ms:.2f}"
+            )
+            reset_request_id(token)
+            raise
 
-    if stage_id == "build_unified":
-        return {
-            "stage_id": stage_id,
-            "inputs": one_item(out_dir / "credit_card.enriched.csv")
-            + one_item(out_dir / "credit_card.unmatched.csv")
-            + one_item(out_dir / "bank.enriched.csv")
-            + one_item(out_dir / "bank.unmatched.csv")
-            + one_item(out_dir / "wechat.normalized.csv")
-            + one_item(out_dir / "alipay.normalized.csv"),
-            "outputs": one_item(out_dir / "unified.transactions.csv")
-            + one_item(out_dir / "unified.transactions.xlsx")
-            + one_item(out_dir / "unified.transactions.all.csv")
-            + one_item(out_dir / "unified.transactions.all.xlsx"),
-        }
+        duration_ms = (perf_counter() - started) * 1000
+        response.headers["X-Request-Id"] = request_id
+        status_code = int(response.status_code)
+        message = f"request completed status={status_code} duration_ms={duration_ms:.2f}"
+        if status_code >= 500:
+            req_logger.bind(status_code=status_code).error(message)
+        elif status_code >= 400:
+            req_logger.bind(status_code=status_code).warning(message)
+        else:
+            req_logger.bind(status_code=status_code).info(message)
+        reset_request_id(token)
+        return response
 
-    if stage_id == "classify":
-        return {
-            "stage_id": stage_id,
-            "inputs": one_item(out_dir / "unified.transactions.csv")
-            + one_item(cfg_dir / "classifier.json"),
-            "outputs": glob_items(out_dir / "classify", "**/*")
-            if (out_dir / "classify").exists()
-            else [],
-        }
+    @app.exception_handler(HTTPException)
+    async def http_exc_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        request_id = current_request_id()
+        req_logger = _request_logger(request, request_id)
+        detail = str(exc.detail)
+        if exc.status_code >= 500:
+            req_logger.bind(status_code=exc.status_code).error(f"http exception: {detail}")
+        elif exc.status_code >= 400:
+            req_logger.bind(status_code=exc.status_code).warning(f"http exception: {detail}")
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": detail, "request_id": request_id},
+        )
 
-    if stage_id == "finalize":
-        return {
-            "stage_id": stage_id,
-            "inputs": one_item(out_dir / "classify" / "unified.with_id.csv")
-            + one_item(out_dir / "classify" / "review.csv")
-            + one_item(cfg_dir / "classifier.json"),
-            "outputs": one_item(out_dir / "unified.transactions.categorized.csv")
-            + one_item(out_dir / "unified.transactions.categorized.xlsx")
-            + one_item(out_dir / "category.summary.csv")
-            + one_item(out_dir / "pending_review.csv"),
-        }
+    @app.exception_handler(RequestValidationError)
+    async def validation_exc_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        request_id = current_request_id()
+        req_logger = _request_logger(request, request_id)
+        req_logger.bind(status_code=422).warning("request validation failed")
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "request validation failed",
+                "request_id": request_id,
+                "details": exc.errors(),
+            },
+        )
 
-    return {"stage_id": stage_id, "inputs": [], "outputs": []}
+    @app.exception_handler(Exception)
+    async def generic_exc_handler(request: Request, exc: Exception) -> JSONResponse:
+        request_id = current_request_id()
+        req_logger = _request_logger(request, request_id)
+        req_logger.bind(status_code=500).opt(exception=True).error("unhandled exception")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal server error", "request_id": request_id},
+        )
 
+    @app.get("/api/health", response_model=HealthResponse)
+    async def health() -> HealthResponse:
+        return HealthResponse(ok=True)
 
-def make_handler(server: WorkflowHTTPServer):
-    root = server.root
+    @app.get("/api/parsers/pdf", response_model=PdfModesResponse)
+    async def parsers_pdf() -> PdfModesResponse:
+        return PdfModesResponse.model_validate({"modes": list_pdf_modes()})
 
-    class Handler(BaseHTTPRequestHandler):
-        def do_OPTIONS(self) -> None:  # noqa: N802
-            self.send_response(HTTPStatus.NO_CONTENT)
-            _set_cors(self)
-            self.end_headers()
+    @app.get("/api/parsers/pdf/health", response_model=PdfParserHealthResponseModel)
+    async def parsers_pdf_health() -> PdfParserHealthResponseModel:
+        return PdfParserHealthResponseModel.model_validate(get_pdf_parser_health())
 
-        def do_GET(self) -> None:  # noqa: N802
-            try:
-                self._handle_get()
-            except Exception as exc:
-                _send_json(self, 500, {"error": str(exc)})
+    @app.get("/api/sources/support", response_model=SourceSupportResponse)
+    async def source_support() -> SourceSupportResponse:
+        return SourceSupportResponse.model_validate({"sources": list_source_support_matrix()})
 
-        def do_POST(self) -> None:  # noqa: N802
-            try:
-                self._handle_post()
-            except Exception as exc:
-                _send_json(self, 500, {"error": str(exc)})
+    @app.get("/api/capabilities", response_model=CapabilitiesPayloadModel)
+    async def capabilities() -> CapabilitiesPayloadModel:
+        return CapabilitiesPayloadModel.model_validate(get_capabilities_payload())
 
-        def do_PUT(self) -> None:  # noqa: N802
-            try:
-                self._handle_put()
-            except Exception as exc:
-                _send_json(self, 500, {"error": str(exc)})
+    @app.get("/api/config/classifier")
+    async def get_global_classifier_config() -> dict[str, JsonValue]:
+        cfg_path = resolve_global_classifier_config(root)
+        if not cfg_path.exists():
+            raise HTTPException(status_code=404, detail="config not found")
+        return _read_json_object(cfg_path)
 
-        def _handle_get(self) -> None:
-            parsed = urllib.parse.urlparse(self.path)
-            path = parsed.path
-            qs = urllib.parse.parse_qs(parsed.query)
-
-            if path == "/api/health":
-                _send_json(self, 200, {"ok": True})
-                return
-
-            if path == "/api/parsers/pdf":
-                _send_json(self, 200, {"modes": list_pdf_modes()})
-                return
-
-            if path == "/api/parsers/pdf/health":
-                _send_json(self, 200, get_pdf_parser_health())
-                return
-
-            if path == "/api/sources/support":
-                _send_json(self, 200, {"sources": list_source_support_matrix()})
-                return
-
-            if path == "/api/capabilities":
-                _send_json(self, 200, get_capabilities_payload())
-                return
-
-            if path == "/api/config/classifier":
-                cfg = resolve_global_classifier_config(root)
-                if not cfg.exists():
-                    _send_json(self, 404, {"error": "config not found"})
-                    return
-                _send_json(self, 200, json.loads(cfg.read_text(encoding="utf-8")))
-                return
-
-            if path == "/api/runs":
-                runs = list_runs(root)
-                meta = []
-                for run_id in runs:
-                    try:
-                        paths = make_paths(root, run_id)
-                        st = get_state(paths)
-                        meta.append(
-                            {
-                                "id": run_id,
-                                "name": str(st.get("name") or "").strip(),
-                                "status": str(st.get("status") or "").strip(),
-                                "created_at": str(st.get("created_at") or "").strip(),
-                            }
-                        )
-                    except Exception:
-                        meta.append({"id": run_id, "name": "", "status": "", "created_at": ""})
-                _send_json(self, 200, {"runs": runs, "runs_meta": meta})
-                return
-
-            if path == "/api/profiles":
-                _send_json(self, 200, {"profiles": list_profiles(root)})
-                return
-
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)", path)
-            if m:
-                run_id = m.group("run_id")
-                paths = make_paths(root, run_id)
-                _send_json(self, 200, _state_with_binding(root, run_id, get_state(paths)))
-                return
-
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/profile-binding", path)
-            if m:
-                run_id = m.group("run_id")
-                try:
-                    binding = get_run_binding(root, run_id)
-                except FileNotFoundError:
-                    _send_json(self, 404, {"error": "run not found"})
-                    return
-                _send_json(self, 200, {"run_id": run_id, "binding": binding})
-                return
-
-            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)", path)
-            if m:
-                profile_id = m.group("profile_id")
-                try:
-                    profile = load_profile(root, profile_id)
-                except FileNotFoundError:
-                    _send_json(self, 404, {"error": "profile not found"})
-                    return
-                _send_json(self, 200, profile)
-                return
-
-            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)/check", path)
-            if m:
-                profile_id = m.group("profile_id")
-                try:
-                    result = check_profile_integrity(root, profile_id)
-                except FileNotFoundError:
-                    _send_json(self, 404, {"error": "profile not found"})
-                    return
-                _send_json(self, 200, result)
-                return
-
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/artifacts", path)
-            if m:
-                run_id = m.group("run_id")
-                paths = make_paths(root, run_id)
-                _send_json(self, 200, {"artifacts": list_artifacts(paths)})
-                return
-
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/artifact", path)
-            if m:
-                run_id = m.group("run_id")
-                rel = (qs.get("path") or [""])[0]
-                if not rel:
-                    _send_json(self, 400, {"error": "missing path"})
-                    return
-                paths = make_paths(root, run_id)
-                file_path = resolve_under_root(paths.run_dir, rel)
-                if not file_path.exists() or not file_path.is_file():
-                    _send_json(self, 404, {"error": "not found"})
-                    return
-                mime, _ = mimetypes.guess_type(file_path.name)
-                mime = mime or "application/octet-stream"
-                data = file_path.read_bytes()
-                self.send_response(200)
-                _set_cors(self)
-                self.send_header("Content-Type", mime)
-                self.send_header("Content-Length", str(len(data)))
-                self.send_header(
-                    "Content-Disposition", f'attachment; filename="{file_path.name}"'
+    @app.get("/api/runs", response_model=RunsResponse)
+    async def get_runs() -> RunsResponse:
+        run_ids = list_runs(root)
+        meta_items: list[RunMetaModel] = []
+        for run_id in run_ids:
+            state = get_state(make_paths(root, run_id))
+            meta_items.append(
+                RunMetaModel(
+                    id=run_id,
+                    name=str(state.get("name", "") or ""),
+                    status=str(state.get("status", "") or ""),
+                    created_at=str(state.get("created_at", "") or ""),
                 )
-                self.end_headers()
-                self.wfile.write(data)
-                return
-
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/preview", path)
-            if m:
-                import csv
-
-                run_id = m.group("run_id")
-                rel = (qs.get("path") or [""])[0]
-                limit = int((qs.get("limit") or ["50"])[0])
-                offset = int((qs.get("offset") or ["0"])[0])
-                if not rel:
-                    _send_json(self, 400, {"error": "missing path"})
-                    return
-                paths = make_paths(root, run_id)
-                file_path = resolve_under_root(paths.run_dir, rel)
-                if not file_path.exists() or not file_path.is_file():
-                    _send_json(self, 404, {"error": "not found"})
-                    return
-                suffix = file_path.suffix.lower()
-                if suffix == ".csv":
-                    rows: list[dict[str, Any]] = []
-                    columns: list[str] = []
-                    has_more = False
-                    with file_path.open("r", encoding="utf-8", newline="") as f:
-                        reader = csv.DictReader(f)
-                        columns = list(reader.fieldnames or [])
-                        seen = 0
-                        for r in reader:
-                            if seen < offset:
-                                seen += 1
-                                continue
-                            if len(rows) >= limit:
-                                has_more = True
-                                break
-                            rows.append(r)
-                    _send_json(
-                        self,
-                        200,
-                        {
-                            "columns": columns,
-                            "rows": rows,
-                            "offset": offset,
-                            "limit": limit,
-                            "has_more": has_more,
-                            "next_offset": offset + limit if has_more else None,
-                            "prev_offset": max(offset - limit, 0) if offset > 0 else None,
-                        },
-                    )
-                    return
-                if suffix in {".xlsx", ".xls"}:
-                    if suffix == ".xls":
-                        _send_json(self, 400, {"error": "preview supports xlsx only"})
-                        return
-                    data = _preview_xlsx(file_path, limit=limit, offset=offset)
-                    _send_json(self, 200, data)
-                    return
-                _send_json(self, 400, {"error": "preview supports csv/xlsx only"})
-                return
-
-            m = re.fullmatch(
-                r"/api/runs/(?P<run_id>[^/]+)/logs/(?P<stage_id>[^/]+)", path
             )
-            if m:
-                run_id = m.group("run_id")
-                stage_id = m.group("stage_id")
-                paths = make_paths(root, run_id)
-                log_path = paths.run_dir / "logs" / f"{stage_id}.log"
-                if not log_path.exists():
-                    _send_json(self, 404, {"error": "log not found"})
-                    return
-                text = log_path.read_text(encoding="utf-8", errors="replace")
-                _send_json(self, 200, {"text": text})
-                return
+        return RunsResponse(runs=run_ids, runs_meta=meta_items)
 
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/config/classifier", path)
-            if m:
-                run_id = m.group("run_id")
-                paths = make_paths(root, run_id)
-                cfg = paths.config_dir / "classifier.json"
-                if not cfg.exists():
-                    _send_json(self, 404, {"error": "config not found"})
-                    return
-                _send_json(self, 200, json.loads(cfg.read_text(encoding="utf-8")))
-                return
+    @app.get("/api/runs/{run_id}", response_model=RunStateResponse)
+    async def get_run(run_id: str) -> RunStateResponse:
+        return _state_with_binding(root, run_id)
 
-            m = re.fullmatch(
-                r"/api/runs/(?P<run_id>[^/]+)/stages/(?P<stage_id>[^/]+)/io", path
-            )
-            if m:
-                run_id = m.group("run_id")
-                stage_id = m.group("stage_id")
-                _send_json(
-                    self, 200, _stage_io(root=root, run_id=run_id, stage_id=stage_id)
-                )
-                return
+    @app.get("/api/runs/{run_id}/profile-binding", response_model=ProfileBindingResponse)
+    async def get_profile_binding(run_id: str) -> ProfileBindingResponse:
+        try:
+            binding = get_run_binding(root, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        parsed_binding = RunBindingModel.model_validate(binding) if binding else None
+        return ProfileBindingResponse(run_id=run_id, binding=parsed_binding)
 
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/stats/match", path)
-            if m:
-                run_id = m.group("run_id")
-                stage_id = (qs.get("stage") or [""])[0]
-                if stage_id not in {"match_credit_card", "match_bank"}:
-                    _send_json(self, 400, {"error": "stage must be match_credit_card or match_bank"})
-                    return
-                paths = make_paths(root, run_id)
-                if stage_id == "match_credit_card":
-                    matched_path = paths.out_dir / "credit_card.enriched.csv"
-                    unmatched_path = paths.out_dir / "credit_card.unmatched.csv"
-                else:
-                    matched_path = paths.out_dir / "bank.enriched.csv"
-                    unmatched_path = paths.out_dir / "bank.unmatched.csv"
-                matched_count, _ = _count_csv_rows(matched_path)
-                unmatched_count, unmatched_reasons = _count_csv_rows(unmatched_path)
-                total = matched_count + unmatched_count
-                match_rate = round(matched_count / total, 4) if total else 0.0
-                reasons_sorted = sorted(unmatched_reasons.items(), key=lambda x: (-x[1], x[0]))
-                _send_json(
-                    self,
-                    200,
-                    {
-                        "stage_id": stage_id,
-                        "matched": matched_count,
-                        "unmatched": unmatched_count,
-                        "total": total,
-                        "match_rate": match_rate,
-                        "unmatched_reasons": [{"reason": k, "count": v} for k, v in reasons_sorted],
-                    },
-                )
-                return
+    @app.get("/api/profiles", response_model=ProfilesResponse)
+    async def get_profiles() -> ProfilesResponse:
+        return ProfilesResponse.model_validate({"profiles": list_profiles(root)})
 
-            m = re.fullmatch(
-                r"/api/runs/(?P<run_id>[^/]+)/preview/pdf/meta", path
-            )
-            if m:
-                from pypdf import PdfReader
+    @app.get("/api/profiles/{profile_id}", response_model=ProfileModel)
+    async def get_profile(profile_id: str) -> ProfileModel:
+        try:
+            return ProfileModel.model_validate(load_profile(root, profile_id))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="profile not found") from exc
 
-                run_id = m.group("run_id")
-                rel = (qs.get("path") or [""])[0]
-                if not rel:
-                    _send_json(self, 400, {"error": "missing path"})
-                    return
-                paths = make_paths(root, run_id)
-                file_path = resolve_under_root(paths.run_dir, rel)
-                if not file_path.exists() or not file_path.is_file():
-                    _send_json(self, 404, {"error": "not found"})
-                    return
-                if file_path.suffix.lower() != ".pdf":
-                    _send_json(self, 400, {"error": "preview supports pdf only"})
-                    return
-                reader = PdfReader(str(file_path))
-                page_count = len(reader.pages)
-                _send_json(self, 200, {"page_count": page_count})
-                return
+    @app.get("/api/profiles/{profile_id}/check", response_model=ProfileIntegrityResultModel)
+    async def check_profile(profile_id: str) -> ProfileIntegrityResultModel:
+        try:
+            result = check_profile_integrity(root, profile_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="profile not found") from exc
+        return ProfileIntegrityResultModel.model_validate(result)
 
-            m = re.fullmatch(
-                r"/api/runs/(?P<run_id>[^/]+)/preview/pdf/page", path
-            )
-            if m:
-                import pdfplumber
+    @app.get("/api/runs/{run_id}/artifacts", response_model=ArtifactsResponse)
+    async def get_artifacts(run_id: str) -> ArtifactsResponse:
+        artifacts = list_artifacts(make_paths(root, run_id))
+        return ArtifactsResponse.model_validate({"artifacts": artifacts})
 
-                run_id = m.group("run_id")
-                rel = (qs.get("path") or [""])[0]
-                page = int((qs.get("page") or ["1"])[0])
-                dpi = int((qs.get("dpi") or ["120"])[0])
-                if not rel:
-                    _send_json(self, 400, {"error": "missing path"})
-                    return
-                if dpi < 72:
-                    dpi = 72
-                if dpi > 200:
-                    dpi = 200
-                paths = make_paths(root, run_id)
-                file_path = resolve_under_root(paths.run_dir, rel)
-                if not file_path.exists() or not file_path.is_file():
-                    _send_json(self, 404, {"error": "not found"})
-                    return
-                if file_path.suffix.lower() != ".pdf":
-                    _send_json(self, 400, {"error": "preview supports pdf only"})
-                    return
-                if page < 1:
-                    _send_json(self, 400, {"error": "page must be >= 1"})
-                    return
-                try:
-                    mtime = file_path.stat().st_mtime
-                    cache_path = _preview_cache_path(paths.run_dir, rel, mtime, page, dpi)
-                    with _PDF_RENDER_LOCK:
-                        if cache_path.exists():
-                            data = cache_path.read_bytes()
-                        else:
-                            with pdfplumber.open(file_path) as pdf:
-                                if page > len(pdf.pages):
-                                    _send_json(self, 400, {"error": "page out of range"})
-                                    return
-                                img = pdf.pages[page - 1].to_image(resolution=dpi).original
-                                buf = io.BytesIO()
-                                img.save(buf, format="PNG")
-                                data = buf.getvalue()
-                            cache_path.write_bytes(data)
-                except Exception as exc:
-                    _send_json(self, 500, {"error": f"pdf render failed: {exc}"})
-                    return
-                self.send_response(200)
-                _set_cors(self)
-                self.send_header("Content-Type", "image/png")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-                return
+    @app.get("/api/runs/{run_id}/artifact")
+    async def download_artifact(run_id: str, path: str = Query(min_length=1)) -> FileResponse:
+        paths = make_paths(root, run_id)
+        file_path = resolve_under_root(paths.run_dir, path)
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        return FileResponse(file_path, media_type=mime_type, filename=file_path.name)
 
-            self.send_response(200)
-            _set_cors(self)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(
-                (
-                    "<html><body>"
-                    "<h3>OpenLedger server is running.</h3>"
-                    "<p>Frontend is not served by this backend. Run <code>pnpm install</code> and <code>pnpm dev</code> under <code>web/</code>.</p>"
-                    "</body></html>"
-                ).encode("utf-8")
+    @app.get("/api/runs/{run_id}/preview", response_model=CsvPreviewResponse)
+    async def preview_table(
+        run_id: str,
+        path: str = Query(min_length=1),
+        limit: int = Query(default=50, ge=1, le=5000),
+        offset: int = Query(default=0, ge=0),
+    ) -> CsvPreviewResponse:
+        paths = make_paths(root, run_id)
+        file_path = resolve_under_root(paths.run_dir, path)
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+
+        suffix = file_path.suffix.lower()
+        if suffix == ".csv":
+            rows: list[dict[str, str]] = []
+            columns: list[str] = []
+            has_more = False
+            with file_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                columns = [str(name) for name in (reader.fieldnames or [])]
+                seen = 0
+                for row in reader:
+                    if seen < offset:
+                        seen += 1
+                        continue
+                    if len(rows) >= limit:
+                        has_more = True
+                        break
+                    rows.append({key: str(value or "") for key, value in row.items()})
+            return CsvPreviewResponse(
+                columns=columns,
+                rows=rows,
+                offset=offset,
+                limit=limit,
+                has_more=has_more,
+                next_offset=offset + limit if has_more else None,
+                prev_offset=max(offset - limit, 0) if offset > 0 else None,
             )
 
-        def _handle_post(self) -> None:
-            parsed = urllib.parse.urlparse(self.path)
-            path = parsed.path
+        if suffix in {".xlsx", ".xls"}:
+            if suffix == ".xls":
+                raise HTTPException(status_code=400, detail="preview supports xlsx only")
+            return _preview_xlsx(file_path, limit=limit, offset=offset)
 
-            if path == "/api/runs":
-                paths = create_run(root)
-                # 允许从 JSON body 读取可选 name。
-                name = ""
+        raise HTTPException(status_code=400, detail="preview supports csv/xlsx only")
+
+    @app.get("/api/runs/{run_id}/logs/{stage_id}", response_model=LogResponse)
+    async def stage_log(run_id: str, stage_id: str) -> LogResponse:
+        paths = make_paths(root, run_id)
+        log_path = paths.run_dir / "logs" / f"{stage_id}.log"
+        if not log_path.exists():
+            raise HTTPException(status_code=404, detail="log not found")
+        return LogResponse(text=log_path.read_text(encoding="utf-8", errors="replace"))
+
+    @app.get("/api/runs/{run_id}/config/classifier")
+    async def get_run_classifier_config(run_id: str) -> dict[str, JsonValue]:
+        cfg = make_paths(root, run_id).config_dir / "classifier.json"
+        if not cfg.exists():
+            raise HTTPException(status_code=404, detail="config not found")
+        return _read_json_object(cfg)
+
+    @app.get("/api/runs/{run_id}/stages/{stage_id}/io", response_model=StageIOResponse)
+    async def stage_io(run_id: str, stage_id: str) -> StageIOResponse:
+        return _stage_io(root=root, run_id=run_id, stage_id=stage_id)
+
+    @app.get("/api/runs/{run_id}/stats/match", response_model=MatchStatsResponse)
+    async def match_stats(
+        run_id: str,
+        stage: Literal["match_credit_card", "match_bank"] = Query(...),
+    ) -> MatchStatsResponse:
+        paths = make_paths(root, run_id)
+        if stage == "match_credit_card":
+            matched_path = paths.out_dir / "credit_card.enriched.csv"
+            unmatched_path = paths.out_dir / "credit_card.unmatched.csv"
+        else:
+            matched_path = paths.out_dir / "bank.enriched.csv"
+            unmatched_path = paths.out_dir / "bank.unmatched.csv"
+
+        matched_count, _ = _count_csv_rows(matched_path)
+        unmatched_count, unmatched_reasons = _count_csv_rows(unmatched_path)
+        total = matched_count + unmatched_count
+        match_rate = round(matched_count / total, 4) if total else 0.0
+        reasons_sorted = sorted(unmatched_reasons.items(), key=lambda item: (-item[1], item[0]))
+        reasons = [MatchReasonModel(reason=key, count=value) for key, value in reasons_sorted]
+        return MatchStatsResponse(
+            stage_id=stage,
+            matched=matched_count,
+            unmatched=unmatched_count,
+            total=total,
+            match_rate=match_rate,
+            unmatched_reasons=reasons,
+        )
+
+    @app.get("/api/runs/{run_id}/preview/pdf/meta", response_model=PdfPreviewMetaResponse)
+    async def pdf_meta(run_id: str, path: str = Query(min_length=1)) -> PdfPreviewMetaResponse:
+        paths = make_paths(root, run_id)
+        file_path = resolve_under_root(paths.run_dir, path)
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+        if file_path.suffix.lower() != ".pdf":
+            raise HTTPException(status_code=400, detail="preview supports pdf only")
+        reader = PdfReader(str(file_path))
+        return PdfPreviewMetaResponse(page_count=len(reader.pages))
+
+    @app.get("/api/runs/{run_id}/preview/pdf/page")
+    async def pdf_page(
+        run_id: str,
+        path: str = Query(min_length=1),
+        page: int = Query(default=1, ge=1),
+        dpi: int = Query(default=120, ge=72, le=200),
+    ) -> Response:
+        paths = make_paths(root, run_id)
+        file_path = resolve_under_root(paths.run_dir, path)
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+        if file_path.suffix.lower() != ".pdf":
+            raise HTTPException(status_code=400, detail="preview supports pdf only")
+
+        mtime = file_path.stat().st_mtime
+        cache_path = _preview_cache_path(paths.run_dir, path, mtime, page, dpi)
+
+        with _PDF_RENDER_LOCK:
+            if cache_path.exists():
+                data = cache_path.read_bytes()
+            else:
+                with pdf_open(file_path) as pdf:
+                    if page > len(pdf.pages):
+                        raise HTTPException(status_code=400, detail="page out of range")
+                    image = pdf.pages[page - 1].to_image(resolution=dpi).original
+                    buf = io.BytesIO()
+                    image.save(buf, format="PNG")
+                    data = buf.getvalue()
+                cache_path.write_bytes(data)
+
+        return Response(content=data, media_type="image/png")
+
+    @app.post("/api/runs", response_model=RunCreateResponse)
+    async def create_run_api(payload: CreateRunPayload | None = Body(default=None)) -> RunCreateResponse:
+        paths = create_run(root)
+        run_id = paths.run_dir.name
+        run_name = payload.name.strip()[:80] if payload else ""
+        if run_name:
+            state = get_state(paths)
+            state["name"] = run_name
+            save_state(paths, state)
+        ctx.logger.bind(run_id=run_id, stage_id="-").info("已创建 Run")
+        return RunCreateResponse.model_validate(_state_with_binding(root, run_id).model_dump())
+
+    @app.post("/api/profiles", response_model=ProfileModel)
+    async def create_profile_api(payload: CreateProfilePayload) -> ProfileModel:
+        profile = create_profile(root, payload.name)
+        return ProfileModel.model_validate(profile)
+
+    @app.post("/api/profiles/{profile_id}/bills", response_model=ProfileModel)
+    async def add_bill(profile_id: str, payload: AddBillPayload) -> ProfileModel:
+        kwargs: dict[str, int | None] = {}
+        if payload.period_year is not None or payload.period_month is not None:
+            kwargs["period_year"] = payload.period_year
+            kwargs["period_month"] = payload.period_month
+        try:
+            profile = add_bill_from_run(root, profile_id, payload.run_id, **kwargs)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="profile or run not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return ProfileModel.model_validate(profile)
+
+    @app.post("/api/profiles/{profile_id}/bills/remove", response_model=ProfileModel)
+    async def remove_bill(profile_id: str, payload: RemoveBillsPayload) -> ProfileModel:
+        try:
+            profile = remove_bills(root, profile_id, period_key=payload.period_key, run_id=payload.run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="profile not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return ProfileModel.model_validate(profile)
+
+    @app.post("/api/profiles/{profile_id}/bills/reimport", response_model=ProfileModel)
+    async def reimport_bill_api(profile_id: str, payload: ReimportBillPayload) -> ProfileModel:
+        try:
+            profile = reimport_bill(root, profile_id, period_key=payload.period_key, run_id=payload.run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return ProfileModel.model_validate(profile)
+
+    @app.post("/api/runs/{run_id}/upload", response_model=UploadResponse)
+    async def upload_files(run_id: str, request: Request, files: list[UploadFile] = File(...)) -> UploadResponse:
+        paths = make_paths(root, run_id)
+        if not paths.run_dir.exists():
+            raise HTTPException(status_code=404, detail="run not found")
+
+        content_length = request.headers.get("content-length", "")
+        if not content_length:
+            raise HTTPException(status_code=400, detail="missing Content-Length")
+        total_bytes = int(content_length)
+        max_bytes = ctx.settings.max_upload_bytes
+        if total_bytes > max_bytes:
+            raise HTTPException(status_code=413, detail=f"payload too large: {total_bytes} > {max_bytes}")
+
+        saved = _save_upload_files(paths.inputs_dir, files)
+        state = get_state(paths)
+        state["inputs"] = [item.model_dump() for item in saved]
+        save_state(paths, state)
+        ctx.logger.bind(run_id=run_id, stage_id="-").info(f"已上传文件数: {len(saved)}")
+        return UploadResponse(saved=saved)
+
+    @app.post("/api/runs/{run_id}/start", response_model=RunStartResponse)
+    async def start_run(run_id: str, payload: StartRunPayload) -> RunStartResponse:
+        options_payload = payload.options.model_dump(exclude_unset=True)
+        legacy_profile = str(options_payload.get("profile_id") or "").strip()
+        if "profile_id" in options_payload:
+            options_payload.pop("profile_id")
+            if legacy_profile:
                 try:
-                    raw = _read_request_body(self)
-                    if raw:
-                        payload = json.loads(raw.decode("utf-8"))
-                        if isinstance(payload, dict):
-                            name = str(payload.get("name") or "").strip()
-                except Exception:
-                    name = ""
-                if name:
-                    state = get_state(paths)
-                    state["name"] = name[:80]
-                    save_state(paths, state)
-                server.logger.bind(run_id=paths.run_dir.name, stage_id="-").info(
-                    "已创建 Run"
-                )
-                _send_json(
-                    self,
-                    200,
-                    _state_with_binding(root, paths.run_dir.name, get_state(paths)),
-                )
-                return
-
-            if path == "/api/profiles":
-                payload = _parse_json(self)
-                if not isinstance(payload, dict):
-                    _send_json(self, 400, {"error": "payload must be json object"})
-                    return
-                name = str(payload.get("name") or "").strip()
-                if not name:
-                    _send_json(self, 400, {"error": "missing name"})
-                    return
-                profile = create_profile(root, name)
-                _send_json(self, 200, profile)
-                return
-
-            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)/bills", path)
-            if m:
-                profile_id = m.group("profile_id")
-                payload = _parse_json(self)
-                if not isinstance(payload, dict):
-                    _send_json(self, 400, {"error": "payload must be json object"})
-                    return
-                run_id = str(payload.get("run_id") or "").strip()
-                if not run_id:
-                    _send_json(self, 400, {"error": "missing run_id"})
-                    return
-                add_kwargs: dict[str, Any] = {}
-                if "period_year" in payload or "period_month" in payload:
-                    add_kwargs["period_year"] = payload.get("period_year")
-                    add_kwargs["period_month"] = payload.get("period_month")
-                try:
-                    profile = add_bill_from_run(root, profile_id, run_id, **add_kwargs)
-                except FileNotFoundError:
-                    _send_json(self, 404, {"error": "profile or run not found"})
-                    return
-                except Exception as exc:
-                    _send_json(self, 400, {"error": str(exc)})
-                    return
-                _send_json(self, 200, profile)
-                return
-
-            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)/bills/remove", path)
-            if m:
-                profile_id = m.group("profile_id")
-                payload = _parse_json(self)
-                if not isinstance(payload, dict):
-                    _send_json(self, 400, {"error": "payload must be json object"})
-                    return
-                period_key = str(payload.get("period_key") or "").strip()
-                run_id = str(payload.get("run_id") or "").strip()
-                if not period_key and not run_id:
-                    _send_json(self, 400, {"error": "missing period_key or run_id"})
-                    return
-                try:
-                    profile = remove_bills(root, profile_id, period_key=period_key or None, run_id=run_id or None)
-                except FileNotFoundError:
-                    _send_json(self, 404, {"error": "profile not found"})
-                    return
-                except Exception as exc:
-                    _send_json(self, 400, {"error": str(exc)})
-                    return
-                _send_json(self, 200, profile)
-                return
-
-            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)/bills/reimport", path)
-            if m:
-                profile_id = m.group("profile_id")
-                payload = _parse_json(self)
-                if not isinstance(payload, dict):
-                    _send_json(self, 400, {"error": "payload must be json object"})
-                    return
-                period_key = str(payload.get("period_key") or "").strip()
-                run_id = str(payload.get("run_id") or "").strip()
-                if not period_key or not run_id:
-                    _send_json(self, 400, {"error": "missing period_key or run_id"})
-                    return
-                try:
-                    profile = reimport_bill(root, profile_id, period_key=period_key, run_id=run_id)
+                    set_run_binding(root, run_id, legacy_profile)
                 except FileNotFoundError as exc:
-                    _send_json(self, 404, {"error": str(exc)})
-                    return
-                except Exception as exc:
-                    _send_json(self, 400, {"error": str(exc)})
-                    return
-                _send_json(self, 200, profile)
-                return
+                    raise HTTPException(status_code=404, detail="run or profile not found") from exc
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+            else:
+                try:
+                    clear_run_binding(root, run_id)
+                except FileNotFoundError:
+                    pass
+        ctx.runner.start(run_id, stages=payload.stages, options=cast(dict[str, object], options_payload))
+        ctx.logger.bind(run_id=run_id, stage_id="-").info(f"已请求启动 Run（stages={payload.stages or 'all'}）")
+        return RunStartResponse(ok=True, run_id=run_id)
 
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/upload", path)
-            if m:
-                run_id = m.group("run_id")
-                paths = make_paths(root, run_id)
-                if not paths.run_dir.exists():
-                    _send_json(self, 404, {"error": "run not found"})
-                    return
+    @app.post("/api/runs/{run_id}/cancel", response_model=CancelResponse)
+    async def cancel_run(run_id: str) -> CancelResponse:
+        ctx.runner.request_cancel(run_id)
+        ctx.logger.bind(run_id=run_id, stage_id="-").warning("已通过 API 请求取消")
+        return CancelResponse(ok=True)
 
-                max_bytes = int(server.settings.max_upload_bytes)
-                content_length = int(self.headers.get("Content-Length", "0") or "0")
-                if content_length <= 0:
-                    _send_json(self, 400, {"error": "missing Content-Length"})
-                    return
-                if content_length > max_bytes:
-                    _send_json(
-                        self,
-                        413,
-                        {
-                            "error": "payload too large",
-                            "max_upload_bytes": max_bytes,
-                            "content_length": content_length,
-                        },
-                    )
-                    return
+    @app.post("/api/runs/{run_id}/reset", response_model=ResetResponse)
+    async def reset_run(run_id: str, payload: ResetPayload) -> ResetResponse:
+        if ctx.runner.is_running(run_id):
+            raise HTTPException(status_code=409, detail="run is running")
+        if payload.scope != "classify":
+            raise HTTPException(status_code=400, detail=f"unknown scope: {payload.scope}")
 
-                ctype = self.headers.get("Content-Type", "")
-                if "multipart/form-data" not in ctype:
-                    _send_json(self, 400, {"error": "expected multipart/form-data"})
-                    return
-                m2 = re.search(r"boundary=(?P<b>[^;]+)", ctype)
-                if not m2:
-                    _send_json(self, 400, {"error": "missing boundary"})
-                    return
-                boundary = m2.group("b").strip().strip('"').encode("utf-8")
-                body = _read_request_body(self)
-                parts = _parse_multipart(body, boundary)
+        paths = make_paths(root, run_id)
+        state = get_state(paths)
 
-                saved = []
-                paths.inputs_dir.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(paths.out_dir / "classify", ignore_errors=True)
+        for artifact in [
+            paths.out_dir / "unified.transactions.categorized.csv",
+            paths.out_dir / "unified.transactions.categorized.xlsx",
+            paths.out_dir / "category.summary.csv",
+            paths.out_dir / "category.summary.xlsx",
+            paths.out_dir / "pending_review.csv",
+        ]:
+            try:
+                artifact.unlink()
+            except FileNotFoundError:
+                pass
 
-                def pick_unique_name(name: str) -> str:
-                    p = paths.inputs_dir / name
-                    if not p.exists():
-                        return name
-                    stem = Path(name).stem
-                    suffix = Path(name).suffix
-                    for i in range(1, 1000):
-                        cand = f"{stem}_{i}{suffix}"
-                        if not (paths.inputs_dir / cand).exists():
-                            return cand
-                    return f"{stem}_{os.getpid()}{suffix}"
+        for stage in state.get("stages", []):
+            stage_id = str(stage.get("id", ""))
+            if stage_id in {"classify", "finalize"}:
+                stage["status"] = "pending"
+                stage["started_at"] = ""
+                stage["ended_at"] = ""
+                stage["error"] = ""
 
-                for part in parts:
-                    raw_name = part.get("filename") or ""
-                    if not raw_name:
-                        continue
-                    filename = safe_filename(raw_name, default="upload.bin")
-                    filename = pick_unique_name(filename)
-                    out = paths.inputs_dir / filename
-                    out.write_bytes(part["content"])
-                    saved.append(
-                        {
-                            "name": filename,
-                            "path": f"inputs/{filename}",
-                            "size": out.stat().st_size,
-                        }
-                    )
+        state["status"] = "idle"
+        state["current_stage"] = None
+        state["cancel_requested"] = False
+        save_state(paths, state)
+        ctx.logger.bind(run_id=run_id, stage_id="-").info("重置完成（scope=classify）")
+        return ResetResponse(ok=True, scope=payload.scope)
 
-                state = get_state(paths)
-                state["inputs"] = saved
-                save_state(paths, state)
-                server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"已上传文件数: {len(saved)}"
-                )
-                _send_json(self, 200, {"saved": saved})
-                return
+    @app.post("/api/runs/{run_id}/review/updates", response_model=ReviewUpdateResponse)
+    async def update_review(run_id: str, payload: ReviewUpdatesPayload) -> ReviewUpdateResponse:
+        paths = make_paths(root, run_id)
+        review_path = paths.out_dir / "classify" / "review.csv"
+        if not review_path.exists():
+            raise HTTPException(status_code=404, detail="review.csv not found")
 
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/start", path)
-            if m:
-                run_id = m.group("run_id")
-                payload = _parse_json(self)
-                stages = payload.get("stages")
-                if stages is not None and not isinstance(stages, list):
-                    _send_json(self, 400, {"error": "stages must be list"})
-                    return
-                options = (
-                    payload.get("options")
-                    if isinstance(payload.get("options"), dict)
-                    else {}
-                )
-                server.runner.start(run_id, stages=stages, options=options)
-                server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"已请求启动 Run（stages={stages or 'all'}）"
-                )
-                _send_json(self, 200, {"ok": True, "run_id": run_id})
-                return
+        update_map: dict[str, ReviewUpdateItem] = {u.txn_id: u for u in payload.updates}
+        temp_path = review_path.with_suffix(".csv.tmp")
 
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/cancel", path)
-            if m:
-                run_id = m.group("run_id")
-                server.runner.request_cancel(run_id)
-                server.logger.bind(run_id=run_id, stage_id="-").warning(
-                    "已通过 API 请求取消"
-                )
-                _send_json(self, 200, {"ok": True})
-                return
+        with review_path.open("r", encoding="utf-8", newline="") as f_in:
+            reader = csv.DictReader(f_in)
+            fieldnames = [str(name) for name in (reader.fieldnames or [])]
+            if "txn_id" not in fieldnames:
+                raise HTTPException(status_code=400, detail="review.csv missing txn_id")
+            rows = list(reader)
 
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/reset", path)
-            if m:
-                run_id = m.group("run_id")
-                if server.runner.is_running(run_id):
-                    _send_json(self, 409, {"error": "run is running"})
-                    return
-                payload = _parse_json(self)
-                scope = str(payload.get("scope") or "classify").strip()
-                paths = make_paths(root, run_id)
-                state = get_state(paths)
+        editable_fields = {"final_category_id", "final_note", "final_ignored", "final_ignore_reason"}
+        editable_fields = {name for name in editable_fields if name in set(fieldnames)}
 
-                if scope == "classify":
-                    shutil.rmtree(paths.out_dir / "classify", ignore_errors=True)
-                    for p in [
-                        paths.out_dir / "unified.transactions.categorized.csv",
-                        paths.out_dir / "unified.transactions.categorized.xlsx",
-                        paths.out_dir / "category.summary.csv",
-                        paths.out_dir / "category.summary.xlsx",
-                        paths.out_dir / "pending_review.csv",
-                    ]:
-                        try:
-                            p.unlink()
-                        except FileNotFoundError:
-                            pass
+        for row in rows:
+            txn_id = str(row.get("txn_id", "") or "").strip()
+            if txn_id not in update_map:
+                continue
+            update_item = update_map[txn_id]
+            value_map = {
+                "final_category_id": update_item.final_category_id,
+                "final_note": update_item.final_note,
+                "final_ignored": update_item.final_ignored,
+                "final_ignore_reason": update_item.final_ignore_reason,
+            }
+            for key in editable_fields:
+                value = value_map.get(key)
+                if value is None:
+                    continue
+                row[key] = str(value)
 
-                    for st in state.get("stages", []):
-                        if st.get("id") in {"classify", "finalize"}:
-                            st.update(
-                                {
-                                    "status": "pending",
-                                    "started_at": "",
-                                    "ended_at": "",
-                                    "error": "",
-                                }
-                            )
+        with temp_path.open("w", encoding="utf-8", newline="") as f_out:
+            writer = csv.DictWriter(f_out, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        temp_path.replace(review_path)
+
+        ctx.logger.bind(run_id=run_id, stage_id="-").info(f"已更新 review.csv 行数={len(update_map)}")
+        return ReviewUpdateResponse(ok=True, updated=len(update_map))
+
+    @app.put("/api/config/classifier", response_model=ConfigWriteResponse)
+    async def update_global_classifier(payload: JsonObjectPayload) -> ConfigWriteResponse:
+        cfg_path = global_classifier_write_path(root)
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        ctx.logger.bind(run_id="-", stage_id="-").info("已更新全局分类器配置")
+        return ConfigWriteResponse(ok=True)
+
+    @app.put("/api/runs/{run_id}/config/classifier", response_model=ConfigWriteResponse)
+    async def update_run_classifier(run_id: str, payload: JsonObjectPayload) -> ConfigWriteResponse:
+        cfg = make_paths(root, run_id).config_dir / "classifier.json"
+        cfg.write_text(json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        ctx.logger.bind(run_id=run_id, stage_id="-").info("已更新本次 Run 的分类器配置")
+        return ConfigWriteResponse(ok=True)
+
+    @app.put("/api/runs/{run_id}/options", response_model=ConfigWriteResponse)
+    async def update_options(run_id: str, payload: RunOptionsPatch) -> ConfigWriteResponse:
+        options_payload = payload.model_dump(exclude_unset=True)
+
+        legacy_profile_value = options_payload.pop("profile_id", None)
+        if legacy_profile_value is not None:
+            profile_id = str(legacy_profile_value).strip()
+            try:
+                if profile_id:
+                    set_run_binding(root, run_id, profile_id)
                 else:
-                    _send_json(self, 400, {"error": f"unknown scope: {scope}"})
-                    return
+                    clear_run_binding(root, run_id)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail="run or profile not found") from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-                state["status"] = "idle"
-                state["current_stage"] = None
-                state["cancel_requested"] = False
-                save_state(paths, state)
-                server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"重置完成（scope={scope}）"
-                )
-                _send_json(self, 200, {"ok": True, "scope": scope})
-                return
+        paths = make_paths(root, run_id)
+        state = get_state(paths)
+        options = dict(state.get("options", {}))
+        options.update(options_payload)
+        options.pop("profile_id", None)
+        state["options"] = options
+        save_state(paths, state)
+        ctx.logger.bind(run_id=run_id, stage_id="-").info(f"已更新 options: {options_payload}")
+        return ConfigWriteResponse(ok=True)
 
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/review/updates", path)
-            if m:
-                import csv
+    @app.put("/api/runs/{run_id}/profile-binding", response_model=SetProfileBindingResponse)
+    async def update_profile_binding(run_id: str, payload: SetProfileBindingPayload) -> SetProfileBindingResponse:
+        try:
+            binding = set_run_binding(root, run_id, payload.profile_id.strip())
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="run or profile not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return SetProfileBindingResponse(ok=True, binding=RunBindingModel.model_validate(binding))
 
-                run_id = m.group("run_id")
-                payload = _parse_json(self)
-                updates = payload.get("updates")
-                if not isinstance(updates, list):
-                    _send_json(self, 400, {"error": "updates must be list"})
-                    return
+    @app.put("/api/profiles/{profile_id}", response_model=ProfileModel)
+    async def update_profile_api(profile_id: str, payload: UpdateProfilePayload) -> ProfileModel:
+        try:
+            profile = update_profile(root, profile_id, payload.model_dump(exclude_unset=True))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="profile not found") from exc
+        return ProfileModel.model_validate(profile)
 
-                paths = make_paths(root, run_id)
-                review_path = paths.out_dir / "classify" / "review.csv"
-                if not review_path.exists():
-                    _send_json(self, 404, {"error": "review.csv not found"})
-                    return
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def fallback(full_path: str) -> Response:
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="not found")
+        return HTMLResponse(
+            "<html><body>"
+            "<h3>OpenLedger server is running.</h3>"
+            "<p>Frontend is not served by this backend. Run <code>pnpm install</code> and <code>pnpm dev</code> under <code>web/</code>.</p>"
+            "</body></html>"
+        )
 
-                update_map: dict[str, dict[str, Any]] = {}
-                for u in updates:
-                    if not isinstance(u, dict):
-                        continue
-                    txn_id = str(u.get("txn_id", "")).strip()
-                    if not txn_id:
-                        continue
-                    update_map[txn_id] = u
-
-                tmp_path = review_path.with_suffix(".csv.tmp")
-                with review_path.open("r", encoding="utf-8", newline="") as f_in:
-                    reader = csv.DictReader(f_in)
-                    fieldnames = list(reader.fieldnames or [])
-                    if "txn_id" not in fieldnames:
-                        _send_json(self, 400, {"error": "review.csv missing txn_id"})
-                        return
-                    rows = list(reader)
-
-                editable = {
-                    "final_category_id",
-                    "final_note",
-                    "final_ignored",
-                    "final_ignore_reason",
-                }
-                editable = {k for k in editable if k in set(fieldnames)}
-                for r in rows:
-                    txn_id = str(r.get("txn_id", "")).strip()
-                    if txn_id in update_map:
-                        u = update_map[txn_id]
-                        for k in editable:
-                            if k in u and u[k] is not None:
-                                r[k] = str(u[k])
-
-                with tmp_path.open("w", encoding="utf-8", newline="") as f_out:
-                    writer = csv.DictWriter(f_out, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerows(rows)
-                tmp_path.replace(review_path)
-
-                server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"已更新 review.csv 行数={len(update_map)}"
-                )
-                _send_json(self, 200, {"ok": True, "updated": len(update_map)})
-                return
-
-            _send_json(self, 404, {"error": "not found"})
-
-        def _handle_put(self) -> None:
-            parsed = urllib.parse.urlparse(self.path)
-            path = parsed.path
-
-            if path == "/api/config/classifier":
-                payload = _parse_json(self)
-                if not isinstance(payload, dict):
-                    _send_json(self, 400, {"error": "config must be json object"})
-                    return
-                cfg = global_classifier_write_path(root)
-                cfg.parent.mkdir(parents=True, exist_ok=True)
-                cfg.write_text(
-                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
-                )
-                server.logger.bind(run_id="-", stage_id="-").info(
-                    "已更新全局分类器配置"
-                )
-                _send_json(self, 200, {"ok": True})
-                return
-
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/config/classifier", path)
-            if m:
-                run_id = m.group("run_id")
-                payload = _parse_json(self)
-                if not isinstance(payload, dict):
-                    _send_json(self, 400, {"error": "config must be json object"})
-                    return
-                paths = make_paths(root, run_id)
-                cfg = paths.config_dir / "classifier.json"
-                cfg.write_text(
-                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
-                )
-                server.logger.bind(run_id=run_id, stage_id="-").info(
-                    "已更新本次 Run 的分类器配置"
-                )
-                _send_json(self, 200, {"ok": True})
-                return
-
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/options", path)
-            if m:
-                run_id = m.group("run_id")
-                payload = _parse_json(self)
-                if not isinstance(payload, dict):
-                    _send_json(self, 400, {"error": "options must be json object"})
-                    return
-                legacy_profile_id = None
-                if "profile_id" in payload:
-                    legacy_profile_id = str(payload.get("profile_id") or "").strip()
-                    payload = dict(payload)
-                    payload.pop("profile_id", None)
-                    try:
-                        if legacy_profile_id:
-                            set_run_binding(root, run_id, legacy_profile_id)
-                        else:
-                            clear_run_binding(root, run_id)
-                    except FileNotFoundError:
-                        _send_json(self, 404, {"error": "run or profile not found"})
-                        return
-                    except Exception as exc:
-                        _send_json(self, 400, {"error": str(exc)})
-                        return
-                paths = make_paths(root, run_id)
-                state = get_state(paths)
-                options = state.setdefault("options", {})
-                if not isinstance(options, dict):
-                    options = {}
-                    state["options"] = options
-                options.update(payload)
-                options.pop("profile_id", None)
-                save_state(paths, state)
-                server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"已更新 options: {payload}" + (f", profile_binding={legacy_profile_id or '<cleared>'}" if legacy_profile_id is not None else "")
-                )
-                _send_json(self, 200, {"ok": True})
-                return
-
-            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/profile-binding", path)
-            if m:
-                run_id = m.group("run_id")
-                payload = _parse_json(self)
-                if not isinstance(payload, dict):
-                    _send_json(self, 400, {"error": "payload must be json object"})
-                    return
-                profile_id = str(payload.get("profile_id") or "").strip()
-                if not profile_id:
-                    _send_json(self, 400, {"error": "missing profile_id"})
-                    return
-                try:
-                    binding = set_run_binding(root, run_id, profile_id)
-                except FileNotFoundError:
-                    _send_json(self, 404, {"error": "run or profile not found"})
-                    return
-                except Exception as exc:
-                    _send_json(self, 400, {"error": str(exc)})
-                    return
-                _send_json(self, 200, {"ok": True, "binding": binding})
-                return
-
-            m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)", path)
-            if m:
-                profile_id = m.group("profile_id")
-                payload = _parse_json(self)
-                if not isinstance(payload, dict):
-                    _send_json(self, 400, {"error": "payload must be json object"})
-                    return
-                try:
-                    profile = update_profile(root, profile_id, payload)
-                except FileNotFoundError:
-                    _send_json(self, 404, {"error": "profile not found"})
-                    return
-                _send_json(self, 200, profile)
-                return
-
-            _send_json(self, 404, {"error": "not found"})
-
-        def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
-            # 本地使用时尽量保持安静，避免 http.server 默认日志刷屏。
-            return
-
-    return Handler
+    return app
 
 
-def serve(
-    root: Path, host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True
-) -> None:
-    server = WorkflowHTTPServer(root)
-    handler = make_handler(server)
-    httpd = ThreadingHTTPServer((host, port), handler)
-
+def serve(root: Path, host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True) -> None:
+    settings: Settings = load_settings()
+    setup_logging(settings)
+    app = create_app(root)
     url = f"http://{host}:{port}"
-    server.logger.bind(run_id="-", stage_id="-").info(f"UI 服务地址 -> {url}")
+    logger = get_logger()
+    logger.bind(run_id="-", stage_id="-").info(f"UI 服务地址 -> {url}")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
-
-    httpd.serve_forever()
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level=settings.log_level.lower(),
+        log_config=None,
+        access_log=False,
+    )
 
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    s = load_settings()
-    serve(root=root, host=s.host, port=s.port, open_browser=s.open_browser)
+    settings = load_settings()
+    serve(root=root, host=settings.host, port=settings.port, open_browser=settings.open_browser)
 
 
 if __name__ == "__main__":

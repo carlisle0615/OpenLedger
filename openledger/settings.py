@@ -40,6 +40,10 @@ class Settings:
     port: int
     open_browser: bool
     log_level: str
+    log_json: bool
+    log_path: str
+    log_rotation_mb: int
+    log_retention_days: int
     max_upload_bytes: int
 
 
@@ -50,6 +54,14 @@ def load_settings() -> Settings:
     open_browser = _parse_bool(_env("OPENLEDGER_OPEN_BROWSER", None), True)
 
     log_level = (_env("OPENLEDGER_LOG_LEVEL", "INFO") or "INFO").upper()
+    log_json = _parse_bool(_env("OPENLEDGER_LOG_JSON", None), False)
+    log_path = (_env("OPENLEDGER_LOG_PATH", "") or "").strip()
+    log_rotation_mb = _parse_int(_env("OPENLEDGER_LOG_ROTATION_MB", "100"), 100)
+    if log_rotation_mb <= 0:
+        log_rotation_mb = 100
+    log_retention_days = _parse_int(_env("OPENLEDGER_LOG_RETENTION_DAYS", "14"), 14)
+    if log_retention_days <= 0:
+        log_retention_days = 14
 
     max_upload_mb = _parse_int(_env("OPENLEDGER_MAX_UPLOAD_MB", "50"), 50)
     if max_upload_mb <= 0:
@@ -62,5 +74,9 @@ def load_settings() -> Settings:
         port=port,
         open_browser=open_browser,
         log_level=log_level,
+        log_json=log_json,
+        log_path=log_path,
+        log_rotation_mb=log_rotation_mb,
+        log_retention_days=log_retention_days,
         max_upload_bytes=max_upload_bytes,
     )
