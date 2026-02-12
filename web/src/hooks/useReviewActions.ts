@@ -568,12 +568,31 @@ export function useReviewActions(deps: ReviewActionsDeps) {
                 return patch;
             });
 
+            // 保留当前本地未保存编辑，并叠加本次规则写入的字段，避免 loadReview 后被清空。
+            const preservedEdits: Record<string, Partial<Record<string, string | boolean>>> = {
+                ...reviewEdits,
+            };
+            for (const item of updates) {
+                const txnId = String(item.txn_id ?? "").trim();
+                if (!txnId) continue;
+                const nextPatch: Partial<Record<string, string | boolean>> = {
+                    ...(preservedEdits[txnId] ?? {}),
+                };
+                for (const key of ["final_category_id", "final_note", "final_ignored", "final_ignore_reason"] as const) {
+                    if (Object.prototype.hasOwnProperty.call(item, key)) {
+                        nextPatch[key] = item[key] as string | boolean;
+                    }
+                }
+                preservedEdits[txnId] = nextPatch;
+            }
+
             await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/review/updates`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ updates }),
             });
             await loadReview();
+            setReviewEdits(preservedEdits);
             setReviewFeedback({ type: "success", text: `规则已应用到 ${matches.length} 条记录。`, ts: Date.now() });
         } catch (e) {
             setError(String(e));
