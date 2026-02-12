@@ -145,6 +145,40 @@ export function ReviewModal() {
     }
   };
 
+  const selectedFinalCategoryId = String(
+    (reviewEdits[reviewSelectedTxnId]?.final_category_id as string)
+    ?? selectedReviewRow?.final_category_id
+    ?? "",
+  ).trim();
+  const selectedFinalIgnoredRaw = String(
+    (reviewEdits[reviewSelectedTxnId]?.final_ignored as any)
+    ?? selectedReviewRow?.final_ignored
+    ?? "",
+  ).trim();
+  const selectedIgnored = selectedFinalIgnoredRaw !== ""
+    ? parseBoolish(selectedFinalIgnoredRaw)
+    : parseBoolish(selectedReviewRow?.suggested_ignored);
+  const selectedPending = Boolean(selectedReviewRow)
+    && parseBoolish(selectedReviewRow?.suggested_uncertain)
+    && !selectedFinalCategoryId
+    && !selectedIgnored;
+  const suggestedCategoryId = String(selectedReviewRow?.suggested_category_id ?? "").trim();
+  const suggestedCategoryName = String(
+    selectedReviewRow?.suggested_category_name
+    ?? selectedReviewRow?.suggested_category_id
+    ?? "",
+  ).trim();
+  const finalCategoryOptions = React.useMemo(() => {
+    const categories = config?.categories ?? [];
+    if (!selectedPending || !suggestedCategoryId) return categories;
+    const idx = categories.findIndex((c) => String(c.id) === suggestedCategoryId);
+    if (idx === -1) {
+      return [{ id: suggestedCategoryId, name: suggestedCategoryName || suggestedCategoryId }, ...categories];
+    }
+    const suggested = categories[idx];
+    return [suggested, ...categories.filter((_, i) => i !== idx)];
+  }, [config?.categories, selectedPending, suggestedCategoryId, suggestedCategoryName]);
+
   if (!reviewOpen) return null;
 
   return (
@@ -513,10 +547,25 @@ export function ReviewModal() {
                                   <SelectValue placeholder="（使用建议）" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="__clear__">（清空）</SelectItem>
-                                  {config?.categories?.map((c) => (
-                                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                                  ))}
+                                  {selectedPending ? (
+                                    <>
+                                      {finalCategoryOptions.map((c, idx) => (
+                                        <SelectItem key={c.id} value={c.id}>
+                                          {idx === 0 && String(c.id) === suggestedCategoryId
+                                            ? `建议：${c.name}`
+                                            : c.name}
+                                        </SelectItem>
+                                      ))}
+                                      <SelectItem value="__clear__">（清空）</SelectItem>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <SelectItem value="__clear__">（清空）</SelectItem>
+                                      {finalCategoryOptions.map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                      ))}
+                                    </>
+                                  )}
                                 </SelectContent>
                               </Select>
                               <div className="flex items-center gap-2">
