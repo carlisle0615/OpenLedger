@@ -5,10 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Profile, ProfileIntegrityIssue, ProfileIntegrityResult, RunState } from "@/types";
 import { api, type RunMeta } from "@/utils/helpers";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ProfileReviewTab } from "@/components/profile-review/ProfileReviewTab";
 import { RefreshCw, Link2, FolderPlus, AlertCircle, Trash2, User, Check, ChevronsUpDown } from "lucide-react";
 
 interface ProfilesPageProps {
@@ -28,6 +30,7 @@ interface ProfilesPageProps {
 }
 
 export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunProfileBinding, runState, confirmAction }: ProfilesPageProps) {
+    const [subView, setSubView] = useState<"manage" | "review">("manage");
     const [selected, setSelected] = useState<Profile | null>(null);
     const [loadingProfile, setLoadingProfile] = useState(false);
     const [runToAttach, setRunToAttach] = useState("");
@@ -276,7 +279,22 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
     };
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <Tabs
+            value={subView}
+            onValueChange={(value) => {
+                if (value === "manage" || value === "review") {
+                    setSubView(value);
+                }
+            }}
+            className="space-y-4"
+        >
+            <TabsList className="h-9 bg-muted/50">
+                <TabsTrigger value="manage" className="text-xs h-7 px-3">账期管理</TabsTrigger>
+                <TabsTrigger value="review" className="text-xs h-7 px-3">账期审阅</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="manage" className="mt-0">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-4 space-y-4">
                 <Card>
                     <CardHeader className="py-3">
@@ -641,6 +659,17 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
                     </CardContent>
                 </Card>
             </div>
-        </div>
+                </div>
+            </TabsContent>
+
+            <TabsContent value="review" className="mt-0">
+                <ProfileReviewTab
+                    baseUrl={baseUrl}
+                    selectedProfileId={selectedProfileId}
+                    selectedProfileName={selected?.name || selectedProfileId}
+                    active={subView === "review"}
+                />
+            </TabsContent>
+        </Tabs>
     );
 }

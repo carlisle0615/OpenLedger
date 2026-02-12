@@ -134,6 +134,79 @@ export type ProfileIntegrityResult = {
     issues: ProfileIntegrityIssue[];
 };
 
+export type ReviewSeverity = "low" | "medium" | "high";
+
+export type ReviewScope = {
+    profile_id: string;
+    profile_name: string;
+    data_source: "profile_bills";
+    year: number | null;
+    months: number;
+    total_bills: number;
+    scoped_bills: number;
+    complete_period_bills: number;
+    unassigned_bills: number;
+};
+
+export type ReviewOverview = {
+    total_expense: number;
+    total_income: number;
+    net: number;
+    period_count: number;
+    anomaly_count: number;
+};
+
+export type ReviewMonthlyPoint = {
+    period_key: string;
+    year: number;
+    month: number;
+    expense: number;
+    income: number;
+    net: number;
+    tx_count: number;
+    mom_expense_rate: number | null;
+    yoy_expense_rate: number | null;
+};
+
+export type ReviewYearlyPoint = {
+    year: number;
+    expense: number;
+    income: number;
+    net: number;
+    tx_count: number;
+};
+
+export type ReviewCategorySlice = {
+    category_id: string;
+    category_name: string;
+    expense: number;
+    income: number;
+    tx_count: number;
+    share_expense: number;
+};
+
+export type ReviewAnomaly = {
+    code: string;
+    severity: ReviewSeverity;
+    title: string;
+    period_key: string;
+    run_id: string;
+    message: string;
+    value: number | null;
+    baseline: number | null;
+    delta_rate: number | null;
+};
+
+export type ProfileReviewResponse = {
+    scope: ReviewScope;
+    overview: ReviewOverview;
+    monthly_points: ReviewMonthlyPoint[];
+    yearly_points: ReviewYearlyPoint[];
+    category_slices: ReviewCategorySlice[];
+    anomalies: ReviewAnomaly[];
+    integrity_issues: ProfileIntegrityIssue[];
+};
+
 export type SourceSupportItem = {
     id: string;
     name: string;

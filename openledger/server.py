@@ -46,6 +46,7 @@ from .profiles import (
     set_run_binding,
     update_profile,
 )
+from .profile_review import build_profile_review
 from .settings import Settings, load_settings
 from .state import resolve_under_root
 from .workflow import (
@@ -329,6 +330,77 @@ class ProfileIntegrityResultModel(ResponseModel):
     profile_id: str
     ok: bool
     issues: list[ProfileIntegrityIssueModel]
+
+
+class ProfileReviewScopeModel(ResponseModel):
+    profile_id: str
+    profile_name: str
+    data_source: Literal["profile_bills"]
+    year: int | None = None
+    months: int
+    total_bills: int
+    scoped_bills: int
+    complete_period_bills: int
+    unassigned_bills: int
+
+
+class ProfileReviewOverviewModel(ResponseModel):
+    total_expense: float
+    total_income: float
+    net: float
+    period_count: int
+    anomaly_count: int
+
+
+class ReviewMonthlyPointModel(ResponseModel):
+    period_key: str
+    year: int
+    month: int
+    expense: float
+    income: float
+    net: float
+    tx_count: int
+    mom_expense_rate: float | None = None
+    yoy_expense_rate: float | None = None
+
+
+class ReviewYearlyPointModel(ResponseModel):
+    year: int
+    expense: float
+    income: float
+    net: float
+    tx_count: int
+
+
+class ReviewCategorySliceModel(ResponseModel):
+    category_id: str
+    category_name: str
+    expense: float
+    income: float
+    tx_count: int
+    share_expense: float
+
+
+class ReviewAnomalyModel(ResponseModel):
+    code: str
+    severity: Literal["low", "medium", "high"]
+    title: str
+    period_key: str
+    run_id: str
+    message: str
+    value: float | None = None
+    baseline: float | None = None
+    delta_rate: float | None = None
+
+
+class ProfileReviewResponseModel(ResponseModel):
+    scope: ProfileReviewScopeModel
+    overview: ProfileReviewOverviewModel
+    monthly_points: list[ReviewMonthlyPointModel]
+    yearly_points: list[ReviewYearlyPointModel]
+    category_slices: list[ReviewCategorySliceModel]
+    anomalies: list[ReviewAnomalyModel]
+    integrity_issues: list[ProfileIntegrityIssueModel]
 
 
 class CreateRunPayload(RequestModel):
@@ -867,6 +939,18 @@ def create_app(root: Path) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="profile not found") from exc
         return ProfileIntegrityResultModel.model_validate(result)
+
+    @app.get("/api/profiles/{profile_id}/review", response_model=ProfileReviewResponseModel)
+    async def profile_review(
+        profile_id: str,
+        year: int | None = Query(default=None, ge=1900, le=2200),
+        months: int = Query(default=12, ge=6, le=36),
+    ) -> ProfileReviewResponseModel:
+        try:
+            result = build_profile_review(root, profile_id, year=year, months=months)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="profile not found") from exc
+        return ProfileReviewResponseModel.model_validate(result)
 
     @app.get("/api/runs/{run_id}/artifacts", response_model=ArtifactsResponse)
     async def get_artifacts(run_id: str) -> ArtifactsResponse:
