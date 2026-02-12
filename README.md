@@ -21,10 +21,12 @@
 
 ## 概览
 
-OpenLedger 采用 **File as State**：你把 PDF/CSV/XLSX 导出放进输入目录，流水线按阶段生成派生产物。
-它不依赖任何银行/支付平台 API，所有数据只在本地机器处理。
+OpenLedger 是一个本地优先的个人财务分析工具。它支持导入 **支付宝**、**微信支付**、**招商银行**（信用卡/储蓄卡）等多种渠道的账单文件，自动通过交叉比对生成统一的交易流水表，并利用 **LLM（大语言模型）** 进行智能、精准的消费分类。（未来将支持更多银行与金融机构）
+
+项目采用 **File as State** 理念：你只需把 PDF/CSV/XLSX 导出文件放进输入目录，流水线即可按阶段生成派生产物。它不依赖任何银行/支付平台 API，所有数据默认只在本地机器处理，保障隐私安全。
 
 文档：
+
 - 架构说明：`docs/architecture.md`
 - 方案思路：`docs/strategy.zh-CN.md`
 - 命令行流水线：`docs/cli.md`
@@ -64,6 +66,7 @@ docker compose up --build
 ```
 
 打开：
+
 - 后端：`http://127.0.0.1:8000`
 - 前端：`http://127.0.0.1:5173`
 
@@ -88,6 +91,7 @@ pnpm dev
 ### 5) PDF 与导出文件准备
 
 当前适配：
+
 - 微信：`微信支付账单流水文件*.xlsx`
 - 支付宝：`支付宝交易明细*.csv`
 - 招行信用卡对账单：`*信用卡账单*.pdf`
@@ -96,6 +100,7 @@ pnpm dev
 ## 工作流 UI
 
 UI 支持：
+
 - 上传文件、查看 stage 产物与日志
 - 设置 `pdf_mode` / 账期 / 分类模式
 - 编辑 `classifier.json`
@@ -141,6 +146,7 @@ uv run python -m tools.scaffold_pdf_parser --mode-id boc --mode-name "中国银�
 ## 隐私与安全
 
 本项目会处理 PDF/CSV/XLSX 等账单文件以及派生输出，均可能包含敏感个人信息。请勿将以下内容提交到版本控制或发到 Issue：
+
 - `.env`（密钥）
 - `bills/`、`output/`、`runs/`、`tmp/`（账单与产物）
 - `config/classifier.local.json`（个人规则）
