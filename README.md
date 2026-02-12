@@ -65,6 +65,8 @@ export OPENROUTER_API_KEY=your_key
 docker compose up --build
 ```
 
+默认会把 SQLite 用户档案库持久化到 `./data/profiles.db`（容器内路径 `/app/data/profiles.db`）。
+
 打开：
 
 - 后端：`http://127.0.0.1:8000`

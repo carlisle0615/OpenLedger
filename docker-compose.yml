@@ -9,6 +9,8 @@ services:
       - "5173:5173"
     environment:
       OPENLEDGER_OPEN_BROWSER: "false"
+      OPENLEDGER_PROFILES_DB_PATH: "/app/data/profiles.db"
     volumes:
       - ./runs:/app/runs
       - ./config:/app/config
+      - ./data:/app/data

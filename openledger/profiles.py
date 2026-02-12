@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 import csv
 import json
+import os
 import re
 import secrets
 import sqlite3
@@ -16,11 +17,19 @@ _MISSING = object()
 
 
 def _db_path(root: Path) -> Path:
-    return root / "profiles.db"
+    configured = str(os.environ.get("OPENLEDGER_PROFILES_DB_PATH", "") or "").strip()
+    if not configured:
+        return root / "profiles.db"
+    path = Path(configured)
+    if not path.is_absolute():
+        path = root / path
+    return path
 
 
 def _connect(root: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(root))
+    db_path = _db_path(root)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
