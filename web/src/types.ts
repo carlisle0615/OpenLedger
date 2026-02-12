@@ -128,3 +128,49 @@ export type ProfileIntegrityResult = {
     ok: boolean;
     issues: ProfileIntegrityIssue[];
 };
+
+export type SourceSupportItem = {
+    id: string;
+    name: string;
+    channel: string;
+    file_types: string[];
+    filename_hints: string[];
+    stage: string;
+    parser_mode: string;
+    support_level: "stable" | "beta" | "planned";
+    notes: string;
+};
+
+export type ParserDetectSampleCheck = {
+    index: number;
+    expected_kind: string;
+    detected_kind: string;
+    ok: boolean;
+};
+
+export type PdfParserHealthItem = {
+    mode_id: string;
+    mode_name: string;
+    status: "ok" | "warning" | "error";
+    kinds: string[];
+    filename_hints: string[];
+    sample_checks: ParserDetectSampleCheck[];
+    warnings: string[];
+    errors: string[];
+};
+
+export type PdfParserHealthResponse = {
+    summary: {
+        total: number;
+        ok: number;
+        warning: number;
+        error: number;
+    };
+    parsers: PdfParserHealthItem[];
+};
+
+export type CapabilitiesPayload = {
+    generated_at: string;
+    source_support_matrix: SourceSupportItem[];
+    pdf_parser_health: PdfParserHealthResponse;
+};

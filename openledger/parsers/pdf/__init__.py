@@ -16,8 +16,11 @@ from pathlib import Path
 from typing import Callable, Final, Literal, TypedDict, TypeAlias
 
 from .cmb import (
+    DETECT_SAMPLES as CMB_DETECT_SAMPLES,
+    FILENAME_HINTS as CMB_FILENAME_HINTS,
     MODE_ID as CMB_MODE_ID,
     MODE_NAME as CMB_MODE_NAME,
+    SUPPORTED_KINDS as CMB_SUPPORTED_KINDS,
     CmbKind,
     CmbRow,
     detect_kind_from_text as cmb_detect_kind_from_text,
@@ -44,12 +47,18 @@ class PdfModeItem(TypedDict):
     name: str
 
 
+ParserDetectSample: TypeAlias = tuple[str, PdfParserKind]
+
+
 @dataclass(frozen=True, slots=True)
 class PdfParser:
     mode_id: PdfParserModeId
     mode_name: str
     detect_kind_from_text: Callable[[str], PdfParserKind | None]
     extract_rows: Callable[[Path, PdfParserKind], list[PdfRow]]
+    kinds: tuple[PdfParserKind, ...] = ()
+    filename_hints: tuple[str, ...] = ()
+    detect_samples: tuple[ParserDetectSample, ...] = ()
 
 
 # =====================
@@ -61,6 +70,9 @@ CMB_PARSER: Final[PdfParser] = PdfParser(
     mode_name=CMB_MODE_NAME,
     detect_kind_from_text=cmb_detect_kind_from_text,
     extract_rows=cmb_extract_rows,
+    kinds=CMB_SUPPORTED_KINDS,
+    filename_hints=CMB_FILENAME_HINTS,
+    detect_samples=CMB_DETECT_SAMPLES,
 )
 
 _PARSERS: Final[tuple[PdfParser, ...]] = (CMB_PARSER,)
@@ -106,4 +118,3 @@ def list_pdf_modes() -> list[PdfModeItem]:
     for parser in iter_pdf_parsers():
         modes.append({"id": parser.mode_id, "name": parser.mode_name})
     return modes
-

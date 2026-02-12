@@ -16,6 +16,7 @@ import { PreviewArea } from "@/components/PreviewArea";
 import { WorkflowPanel } from "@/components/WorkflowPanel";
 import { WorkflowTimeline } from "@/components/WorkflowTimeline";
 import { ReviewModal } from "@/components/ReviewModal";
+import { CapabilitiesPanel } from "@/components/CapabilitiesPanel";
 
 
 export default function App() {
@@ -157,6 +158,8 @@ export default function App() {
                       baseUrl={baseUrl}
                       selectFile={selectFile}
                     />
+
+                    <CapabilitiesPanel baseUrl={baseUrl} runState={state || null} />
 
                     {showConfigPanel ? (
                       <ConfigPanel

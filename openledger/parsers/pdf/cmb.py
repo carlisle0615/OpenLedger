@@ -15,6 +15,15 @@ MODE_ID: Final[Literal["cmb"]] = "cmb"
 MODE_NAME: Final[str] = "招商银行（信用卡对账单/交易流水）"
 
 CmbKind: TypeAlias = Literal["cmb_credit_card", "cmb_statement"]
+SUPPORTED_KINDS: Final[tuple[CmbKind, ...]] = ("cmb_credit_card", "cmb_statement")
+FILENAME_HINTS: Final[tuple[str, ...]] = (
+    "*信用卡账单*.pdf",
+    "*招商银行交易流水*.pdf",
+)
+DETECT_SAMPLES: Final[tuple[tuple[str, CmbKind], ...]] = (
+    ("招商银行信用卡对账单\n账单日 2024年06月20日", "cmb_credit_card"),
+    ("Transaction Statement of China Merchants Bank\n招商银行交易流水", "cmb_statement"),
+)
 
 
 class CmbCreditCardRow(TypedDict):

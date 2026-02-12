@@ -28,6 +28,7 @@ OpenLedger 采用 **File as State**：你把 PDF/CSV/XLSX 导出放进输入目�
 - 架构说明：`docs/architecture.md`
 - 方案思路：`docs/strategy.zh-CN.md`
 - 命令行流水线：`docs/cli.md`
+- Parser 脚手架：`docs/parser-scaffold.md`
 
 ## 特性
 
@@ -134,6 +135,7 @@ tests/        测试
 uv run python -m tools.probe_pdf <pdf路径> --max-pages 2 --render-pages 1
 uv run python -m tools.probe_inputs --wechat <xlsx> --alipay <csv>
 uv run python -m tools.batch_ignore_review_before_date --review <path> --cutoff 2024-01-01
+uv run python -m tools.scaffold_pdf_parser --mode-id boc --mode-name "中国银行（信用卡/流水）" --kinds boc_credit_card,boc_statement
 ```
 
 ## 隐私与安全

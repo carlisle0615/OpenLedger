@@ -43,6 +43,9 @@ The backend serves:
 - `/api/runs/<run_id>/start|cancel|reset`: control workflow
 - `/api/runs/<run_id>/artifact|preview|logs/*`: fetch artifacts/previews/logs for the UI
 - `/api/config/classifier`: read/write global classifier config (writes to `config/classifier.local.json`)
+- `/api/sources/support`: input source support matrix (for upload guidance)
+- `/api/parsers/pdf/health`: parser health and smoke-check summary
+- `/api/capabilities`: aggregated capabilities payload (support matrix + parser health)
 
 ## Security / Privacy Boundaries
 

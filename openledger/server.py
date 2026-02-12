@@ -15,6 +15,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from .capabilities import (
+    get_capabilities_payload,
+    get_pdf_parser_health,
+    list_source_support_matrix,
+)
 from .config import global_classifier_write_path, resolve_global_classifier_config
 from .files import safe_filename
 from .logger import get_logger
@@ -365,6 +370,18 @@ def make_handler(server: WorkflowHTTPServer):
 
             if path == "/api/parsers/pdf":
                 _send_json(self, 200, {"modes": list_pdf_modes()})
+                return
+
+            if path == "/api/parsers/pdf/health":
+                _send_json(self, 200, get_pdf_parser_health())
+                return
+
+            if path == "/api/sources/support":
+                _send_json(self, 200, {"sources": list_source_support_matrix()})
+                return
+
+            if path == "/api/capabilities":
+                _send_json(self, 200, get_capabilities_payload())
                 return
 
             if path == "/api/config/classifier":
