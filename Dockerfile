@@ -17,6 +17,15 @@ RUN corepack enable \
 COPY web/ .
 RUN pnpm build
 
+FROM node:20-slim AS node_runtime
+ARG NPM_REGISTRY
+ENV COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
+WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable \
+    && pnpm config set registry "${NPM_REGISTRY}" \
+    && pnpm install --frozen-lockfile --prod
+
 FROM python:3.13-slim AS backend
 ARG PIP_INDEX_URL
 ARG UV_INDEX_URL
@@ -55,6 +64,9 @@ RUN set -eux; \
 
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 COPY --from=backend /app /app
+COPY --from=node_runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node_runtime /app/package.json /app/package.json
+COPY --from=node_runtime /app/node_modules /app/node_modules
 COPY --from=frontend /app/web/dist /app/web/dist
 COPY docker/entrypoint.sh /entrypoint.sh
 COPY docker/Caddyfile /etc/caddy/Caddyfile

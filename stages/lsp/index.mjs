@@ -64,18 +64,17 @@ const PROVIDERS = {
       const headers = {};
       if (cfg.openrouterReferer) headers["HTTP-Referer"] = cfg.openrouterReferer;
       if (cfg.openrouterTitle) headers["X-Title"] = cfg.openrouterTitle;
-      return new ChatOpenAI(
-        {
-          model: cfg.model,
-          temperature: cfg.temperature,
-          maxTokens: cfg.maxTokens ?? undefined,
-          apiKey: cfg.apiKey ?? undefined,
-        },
-        {
-          baseURL: cfg.baseUrl,
-          ...(Object.keys(headers).length ? { defaultHeaders: headers } : {}),
-        },
-      );
+      const configuration = {
+        ...(cfg.baseUrl ? { baseURL: cfg.baseUrl } : {}),
+        ...(Object.keys(headers).length ? { defaultHeaders: headers } : {}),
+      };
+      return new ChatOpenAI({
+        model: cfg.model,
+        temperature: cfg.temperature,
+        maxTokens: cfg.maxTokens ?? undefined,
+        apiKey: cfg.apiKey ?? undefined,
+        ...(Object.keys(configuration).length ? { configuration } : {}),
+      });
     },
   },
   ollama: {
@@ -206,6 +205,19 @@ function normalizeString(value) {
 }
 
 /**
+ * 从多个候选中选择首个非空字符串。
+ * @param {...(string | undefined | null)} values 候选值
+ * @returns {string}
+ */
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    const normalized = normalizeString(value);
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+/**
  * @param {{ lsp?: LspConfig; provider?: LspProviderId; model?: string }} config 全局配置
  * @param {{ provider?: string | null; model?: string | null; baseUrl?: string | null; apiKey?: string | null; apiKeyEnv?: string | null; temperature?: number | null; maxTokens?: number | null; minimaxGroupId?: string | null; }} args 命令行覆盖
  * @returns {LspResolvedConfig}
@@ -224,8 +236,13 @@ export function resolveLspConfig(config, args) {
     throw new Error(`LSP provider ${provider.id} 缺少 model`);
   }
 
-  const envBaseUrl = provider.id === "ollama" ? normalizeString(process.env.OLLAMA_BASE_URL) : "";
-  const baseUrl = normalizeString(args.baseUrl ?? rawLsp.base_url ?? envBaseUrl ?? provider.defaultBaseUrl);
+  const envBaseUrl = provider.id === "ollama" ? process.env.OLLAMA_BASE_URL : "";
+  const baseUrl = firstNonEmptyString(
+    args.baseUrl,
+    rawLsp.base_url,
+    envBaseUrl,
+    provider.defaultBaseUrl,
+  );
   const apiKeyEnv = normalizeString(args.apiKeyEnv ?? rawLsp.api_key_env ?? provider.defaultApiKeyEnv);
   const apiKey = normalizeString(args.apiKey ?? (apiKeyEnv ? process.env[apiKeyEnv] : "")) || null;
   const minimaxGroupId = normalizeString(args.minimaxGroupId ?? rawLsp.minimax_group_id ?? process.env.MINIMAX_GROUP_ID) || "";
