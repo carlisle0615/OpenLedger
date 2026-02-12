@@ -373,6 +373,8 @@ def match_bank_statements(
     debug_rows: list[dict[str, Any]] = []
     observed_raw_cols: set[str] = set()
     duplicate_map: dict[tuple[str, ...], dict[str, Any]] = {}
+    seen_bank_rows: set[tuple[str, ...]] = set()
+    skipped_duplicate_rows = 0
 
     def dup_key(row: pd.Series) -> tuple[str, ...]:
         return (
@@ -380,6 +382,7 @@ def match_bank_statements(
             str(row.get("account_last4") or "").strip(),
             str(row.get("trans_date") or "").strip(),
             str(row.get("amount") or "").strip(),
+            str(row.get("balance") or "").strip(),
             str(row.get("summary") or "").strip(),
             str(row.get("counterparty") or "").strip(),
         )
@@ -427,6 +430,14 @@ def match_bank_statements(
                 "chosen_trade_no": "",
                 "chosen_merchant_no": "",
             }
+
+            row_key = dup_key(row)
+            if row_key in seen_bank_rows:
+                skipped_duplicate_rows += 1
+                debug["match_status"] = "duplicate_row_skipped"
+                debug_rows.append(debug)
+                continue
+            seen_bank_rows.add(row_key)
 
             if not account_last4:
                 unmatched_rows.append({**base, "match_status": "missing_account_last4"})
@@ -691,6 +702,8 @@ def match_bank_statements(
 
     log("match_bank", f"已匹配={len(enriched_df)} 输出={enriched_path}")
     log("match_bank", f"未匹配={len(unmatched_df)} 输出={unmatched_path}")
+    if skipped_duplicate_rows:
+        log("match_bank", f"去重：跳过重复原始流水 {skipped_duplicate_rows} 条")
     log("match_bank", f"Excel={xlsx_path}")
     log("match_bank", f"Debug={debug_path}")
 

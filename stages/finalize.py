@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import pandas as pd
@@ -25,6 +26,7 @@ from ._common import log, make_parser
 
 REVIEW_REQUIRED_COLUMNS = set(required_columns(ART_REVIEW))
 UNIFIED_WITH_ID_REQUIRED_COLUMNS = set(required_columns(ART_UNIFIED_WITH_ID))
+WALLET_PRIMARY_SOURCES = {"wechat", "alipay"}
 
 
 def default_classifier_config_path() -> Path:
@@ -46,6 +48,88 @@ def _parse_bool(value: object) -> bool:
 def _read_config(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _normalized_amount_key(value: object) -> str:
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    try:
+        return str(Decimal(s).quantize(Decimal("0.01")))
+    except (InvalidOperation, ValueError):
+        return s
+
+
+def _auto_ignore_wallet_duplicates(merged: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    required_cols = [
+        "match_group_id",
+        "primary_source",
+        "trade_date",
+        "amount",
+        "merchant",
+        "item",
+        "flow",
+        "ignored",
+        "ignore_reason",
+    ]
+    if any(col not in merged.columns for col in required_cols):
+        return merged, 0
+
+    group_index: dict[str, list[int]] = {}
+    for idx, row in merged.iterrows():
+        group_id = str(row.get("match_group_id", "")).strip()
+        if not group_id:
+            continue
+        group_index.setdefault(group_id, []).append(idx)
+
+    if not group_index:
+        return merged, 0
+
+    dropped = 0
+    for _, indices in group_index.items():
+        if len(indices) <= 1:
+            continue
+
+        bill_indices: list[int] = []
+        wallet_indices: list[int] = []
+        for idx in indices:
+            primary_source = str(merged.at[idx, "primary_source"]).strip()
+            if primary_source in WALLET_PRIMARY_SOURCES:
+                wallet_indices.append(idx)
+            else:
+                bill_indices.append(idx)
+        if not bill_indices or not wallet_indices:
+            continue
+
+        bill_signatures = {
+            (
+                str(merged.at[idx, "trade_date"]).strip(),
+                _normalized_amount_key(merged.at[idx, "amount"]),
+                str(merged.at[idx, "merchant"]).strip(),
+                str(merged.at[idx, "item"]).strip(),
+                str(merged.at[idx, "flow"]).strip(),
+            )
+            for idx in bill_indices
+        }
+
+        for idx in wallet_indices:
+            ignored = _parse_bool(merged.at[idx, "ignored"])
+            if ignored:
+                continue
+            signature = (
+                str(merged.at[idx, "trade_date"]).strip(),
+                _normalized_amount_key(merged.at[idx, "amount"]),
+                str(merged.at[idx, "merchant"]).strip(),
+                str(merged.at[idx, "item"]).strip(),
+                str(merged.at[idx, "flow"]).strip(),
+            )
+            if signature not in bill_signatures:
+                continue
+            merged.at[idx, "ignored"] = "true"
+            merged.at[idx, "ignore_reason"] = "自动去重：同一匹配组已保留账单侧，忽略钱包侧重复项"
+            dropped += 1
+
+    return merged, dropped
 
 
 def finalize(
@@ -182,6 +266,9 @@ def finalize(
         on="txn_id",
         how="left",
     )
+    merged, auto_dropped = _auto_ignore_wallet_duplicates(merged)
+    if auto_dropped:
+        log("finalize", f"自动去重：match_group 钱包重复项={auto_dropped}")
 
     # 删列（来自命令行 + 配置）。
     drop_from_config = [c for c in config.get("drop_output_columns", []) if isinstance(c, str)]
