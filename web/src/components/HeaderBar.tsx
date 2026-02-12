@@ -34,8 +34,8 @@ interface HeaderBarProps {
     runName: string;
     refreshRuns: () => Promise<any>;
     onCreateRun: (name: string) => Promise<void>;
-    activeView: "workspace" | "profiles" | "capabilities";
-    setActiveView: (v: "workspace" | "profiles" | "capabilities") => void;
+    activeView: "workspace" | "profiles" | "capabilities" | "config";
+    setActiveView: (v: "workspace" | "profiles" | "capabilities" | "config") => void;
     profiles: ProfileListItem[];
     currentProfileId: string;
     onSelectProfile: (id: string) => void;
@@ -99,6 +99,14 @@ export function HeaderBar({
                                 onClick={() => setActiveView("capabilities")}
                             >
                                 能力
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant={activeView === "config" ? "secondary" : "ghost"}
+                                className="h-7 px-3 text-xs"
+                                onClick={() => setActiveView("config")}
+                            >
+                                配置中心
                             </Button>
                         </div>
                     </nav>

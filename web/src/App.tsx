@@ -18,10 +18,11 @@ import { WorkflowPanel } from "@/components/WorkflowPanel";
 import { WorkflowTimeline } from "@/components/WorkflowTimeline";
 import { ReviewModal } from "@/components/ReviewModal";
 import { CapabilitiesPanel } from "@/components/CapabilitiesPanel";
+import { ConfigCenterPage } from "@/components/ConfigCenterPage";
 
 
 export default function App() {
-  const [activeView, setActiveView] = React.useState<"workspace" | "profiles" | "capabilities">("workspace");
+  const [activeView, setActiveView] = React.useState<"workspace" | "profiles" | "capabilities" | "config">("workspace");
   const appState = useAppState();
   const {
     baseUrl, runs, runId, runsMeta,
@@ -171,6 +172,8 @@ export default function App() {
                 mode="standalone"
               />
             </div>
+          ) : activeView === "config" ? (
+            <ConfigCenterPage baseUrl={baseUrl} />
           ) : (
             <div className="flex flex-col h-full bg-muted/10">
               {state?.stages?.length ? (
