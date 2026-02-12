@@ -349,7 +349,11 @@ def _should_attempt_match(summary: str, counterparty: str) -> bool:
     s = summary.strip()
     c = counterparty.strip()
     keywords = ["快捷支付", "银联快捷支付", "快捷退款", "银联快捷退款", "支付宝", "财付通", "微信"]
-    return any(k in s for k in keywords) or any(k in c for k in ["支付宝", "财付通", "微信"])
+    if any(k in s for k in keywords) or any(k in c for k in ["支付宝", "财付通", "微信"]):
+        return True
+    # 工资/薪资等入账需要纳入记账，不应被 skipped_non_payment 直接忽略。
+    income_keywords = ["代发工资", "工资", "薪资", "薪金", "奖金", "补贴", "报销"]
+    return any(k in s for k in income_keywords) or any(k in c for k in income_keywords)
 
 
 def match_bank_statements(

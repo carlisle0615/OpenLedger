@@ -190,7 +190,9 @@ def _aggregate_monthly(bills: list[_BillMetrics]) -> list[_MonthlyAggregate]:
         slot.net += bill.net
         slot.tx_count += bill.tx_count
         for category_id, value in bill.category_expense.items():
-            slot.category_expense[category_id] = slot.category_expense.get(category_id, 0.0) + value
+            slot.category_expense[category_id] = (
+                slot.category_expense.get(category_id, 0.0) + value
+            )
     return [monthly[key] for key in sorted(monthly.keys())]
 
 
@@ -206,14 +208,22 @@ def _build_category_slices(
 
     for bill in bills:
         for category_id, value in bill.category_expense.items():
-            category_expense[category_id] = category_expense.get(category_id, 0.0) + value
-            category_names[category_id] = bill.category_names.get(category_id, category_id)
+            category_expense[category_id] = (
+                category_expense.get(category_id, 0.0) + value
+            )
+            category_names[category_id] = bill.category_names.get(
+                category_id, category_id
+            )
         for category_id, value in bill.category_income.items():
             category_income[category_id] = category_income.get(category_id, 0.0) + value
-            category_names[category_id] = bill.category_names.get(category_id, category_id)
+            category_names[category_id] = bill.category_names.get(
+                category_id, category_id
+            )
         for category_id, value in bill.category_count.items():
             category_count[category_id] = category_count.get(category_id, 0) + value
-            category_names[category_id] = bill.category_names.get(category_id, category_id)
+            category_names[category_id] = bill.category_names.get(
+                category_id, category_id
+            )
 
     rows: list[dict[str, float | int | str]] = []
     for category_id, expense in category_expense.items():
@@ -273,13 +283,21 @@ def build_profile_review(
     months: int = 12,
 ) -> dict[str, object]:
     raw_profile = _RawProfile.model_validate(load_profile(root, profile_id))
-    raw_integrity = _RawIntegrityResult.model_validate(check_profile_integrity(root, profile_id))
+    raw_integrity = _RawIntegrityResult.model_validate(
+        check_profile_integrity(root, profile_id)
+    )
 
     bills = [_normalize_bill(item) for item in raw_profile.bills]
-    complete_bills = [bill for bill in bills if bill.year is not None and bill.month is not None]
+    complete_bills = [
+        bill for bill in bills if bill.year is not None and bill.month is not None
+    ]
     scoped_bills = [bill for bill in bills if year is None or bill.year == year]
-    scoped_complete_bills = [bill for bill in complete_bills if year is None or bill.year == year]
-    unassigned_bills = [bill for bill in bills if bill.year is None or bill.month is None]
+    scoped_complete_bills = [
+        bill for bill in complete_bills if year is None or bill.year == year
+    ]
+    unassigned_bills = [
+        bill for bill in bills if bill.year is None or bill.month is None
+    ]
 
     all_monthly = _aggregate_monthly(complete_bills)
     scoped_monthly = _aggregate_monthly(scoped_complete_bills)
@@ -299,7 +317,8 @@ def build_profile_review(
 
         monthly_points_full.append(
             {
-                "period_key": item.period_key or _normalized_period_key(item.year, item.month),
+                "period_key": item.period_key
+                or _normalized_period_key(item.year, item.month),
                 "year": item.year,
                 "month": item.month,
                 "expense": _round2(item.expense),
@@ -317,7 +336,7 @@ def build_profile_review(
             }
         )
 
-    months_window = max(6, min(36, int(months)))
+    months_window = max(6, min(120, int(months)))
     if len(monthly_points_full) > months_window:
         monthly_points_display = monthly_points_full[-months_window:]
     else:

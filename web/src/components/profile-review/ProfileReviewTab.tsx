@@ -53,8 +53,7 @@ export function ProfileReviewTab({
     selectedProfileName,
     active,
 }: ProfileReviewTabProps) {
-    const [yearFilter, setYearFilter] = useState<string>("__all__");
-    const [months, setMonths] = useState<string>("12");
+    const [timeRange, setTimeRange] = useState<string>("last_12");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [data, setData] = useState<ProfileReviewResponse | null>(null);
@@ -65,8 +64,22 @@ export function ProfileReviewTab({
         setError("");
         try {
             const params = new URLSearchParams();
-            if (yearFilter !== "__all__") params.set("year", yearFilter);
-            params.set("months", months);
+
+            // Parse timeRange
+            if (timeRange.startsWith("year_")) {
+                const y = timeRange.replace("year_", "");
+                params.set("year", y);
+                params.set("months", "12");
+            } else if (timeRange === "all_time") {
+                params.set("months", "120"); // Max supported by backend
+            } else if (timeRange.startsWith("last_")) {
+                const m = timeRange.replace("last_", "");
+                params.set("months", m);
+            } else {
+                // Fallback
+                params.set("months", "12");
+            }
+
             const query = params.toString();
             const path = `/api/profiles/${encodeURIComponent(selectedProfileId)}/review${query ? `?${query}` : ""}`;
             const payload = await api<ProfileReviewResponse>(baseUrl, path);
@@ -76,7 +89,7 @@ export function ProfileReviewTab({
         } finally {
             setLoading(false);
         }
-    }, [baseUrl, selectedProfileId, active, yearFilter, months]);
+    }, [baseUrl, selectedProfileId, active, timeRange]);
 
     useEffect(() => {
         if (!selectedProfileId) {
@@ -88,12 +101,11 @@ export function ProfileReviewTab({
         loadReview().catch(() => { });
     }, [selectedProfileId, active, loadReview]);
 
-    const yearOptions = useMemo(() => {
+    const availableYears = useMemo(() => {
         const set = new Set<string>();
         (data?.yearly_points ?? []).forEach((item) => set.add(String(item.year)));
-        if (yearFilter !== "__all__") set.add(yearFilter);
         return Array.from(set).sort((a, b) => Number(b) - Number(a));
-    }, [data?.yearly_points, yearFilter]);
+    }, [data?.yearly_points]);
 
     const yearlyPoints = data?.yearly_points ?? [];
     const yearlyChart = useMemo(() => {
@@ -187,30 +199,27 @@ export function ProfileReviewTab({
                         当前用户：<span className="font-medium text-foreground">{selectedProfileName || selectedProfileId}</span>
                         <span className="font-mono ml-2">{selectedProfileId}</span>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-[180px_180px_auto] gap-2 items-center">
-                        <Select value={yearFilter} onValueChange={setYearFilter}>
+                    <div className="grid grid-cols-1 md:grid-cols-[240px_auto] gap-2 items-center">
+                        <Select
+                            value={timeRange}
+                            onValueChange={(val) => {
+                                setTimeRange(val);
+                            }}
+                        >
                             <SelectTrigger className="h-8 text-xs">
-                                <SelectValue placeholder="全部年份" />
+                                <SelectValue placeholder="时间范围" />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="__all__" className="text-xs">全部年份</SelectItem>
-                                {yearOptions.map((year) => (
-                                    <SelectItem key={year} value={year} className="text-xs font-mono">
-                                        {year}
+                                <SelectItem value="last_12" className="text-xs">最近 12 个月</SelectItem>
+                                <SelectItem value="last_24" className="text-xs">最近 24 个月</SelectItem>
+                                <SelectItem value="last_36" className="text-xs">最近 36 个月</SelectItem>
+                                <SelectItem value="all_time" className="text-xs">全部年份（最多 10 年）</SelectItem>
+                                {availableYears.length > 0 && <div className="h-px bg-border my-1" />}
+                                {availableYears.map((year) => (
+                                    <SelectItem key={year} value={`year_${year}`} className="text-xs font-mono">
+                                        {year} 年
                                     </SelectItem>
                                 ))}
-                            </SelectContent>
-                        </Select>
-                        <Select value={months} onValueChange={setMonths}>
-                            <SelectTrigger className="h-8 text-xs">
-                                <SelectValue placeholder="月度窗口" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="6" className="text-xs">最近 6 个月</SelectItem>
-                                <SelectItem value="12" className="text-xs">最近 12 个月</SelectItem>
-                                <SelectItem value="18" className="text-xs">最近 18 个月</SelectItem>
-                                <SelectItem value="24" className="text-xs">最近 24 个月</SelectItem>
-                                <SelectItem value="36" className="text-xs">最近 36 个月</SelectItem>
                             </SelectContent>
                         </Select>
                         <div className="flex md:justify-end">

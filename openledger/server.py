@@ -36,7 +36,13 @@ from .config import (
     resolve_global_classifier_config,
 )
 from .files import safe_filename
-from .logger import current_request_id, get_logger, reset_request_id, set_request_id, setup_logging
+from .logger import (
+    current_request_id,
+    get_logger,
+    reset_request_id,
+    set_request_id,
+    setup_logging,
+)
 from .parsers.pdf import list_pdf_modes
 from .profiles import (
     add_bill_from_run,
@@ -531,7 +537,9 @@ class WorkflowContext:
         self.logger = get_logger()
 
 
-def _preview_cache_path(run_dir: Path, rel_path: str, mtime: float, page: int, dpi: int) -> Path:
+def _preview_cache_path(
+    run_dir: Path, rel_path: str, mtime: float, page: int, dpi: int
+) -> Path:
     key = f"{rel_path}|{mtime:.3f}|{page}|{dpi}".encode("utf-8")
     digest = hashlib.sha1(key).hexdigest()[:16]
     cache_dir = run_dir / "preview"
@@ -564,7 +572,9 @@ def _file_item(run_dir: Path, file_path: Path) -> FileItemModel:
         size = file_path.stat().st_size
     else:
         size = None
-    return FileItemModel(path=rel, name=file_path.name, exists=file_path.exists(), size=size)
+    return FileItemModel(
+        path=rel, name=file_path.name, exists=file_path.exists(), size=size
+    )
 
 
 def _glob_items(run_dir: Path, base: Path, pattern: str) -> list[FileItemModel]:
@@ -592,7 +602,8 @@ def _stage_io(root: Path, run_id: str, stage_id: str) -> StageIOResponse:
     if stage_id == "extract_exports":
         return StageIOResponse(
             stage_id=stage_id,
-            inputs=_glob_items(run_dir, inputs_dir, "*.xlsx") + _glob_items(run_dir, inputs_dir, "*.csv"),
+            inputs=_glob_items(run_dir, inputs_dir, "*.xlsx")
+            + _glob_items(run_dir, inputs_dir, "*.csv"),
             outputs=_one_item(run_dir, out_dir / "wechat.normalized.csv")
             + _one_item(run_dir, out_dir / "alipay.normalized.csv"),
         )
@@ -643,10 +654,15 @@ def _stage_io(root: Path, run_id: str, stage_id: str) -> StageIOResponse:
         )
 
     if stage_id == "classify":
-        classify_outputs = _glob_items(run_dir, out_dir / "classify", "**/*") if (out_dir / "classify").exists() else []
+        classify_outputs = (
+            _glob_items(run_dir, out_dir / "classify", "**/*")
+            if (out_dir / "classify").exists()
+            else []
+        )
         return StageIOResponse(
             stage_id=stage_id,
-            inputs=_one_item(run_dir, out_dir / "unified.transactions.csv") + _one_item(run_dir, cfg_dir / "classifier.json"),
+            inputs=_one_item(run_dir, out_dir / "unified.transactions.csv")
+            + _one_item(run_dir, cfg_dir / "classifier.json"),
             outputs=classify_outputs,
         )
 
@@ -665,7 +681,9 @@ def _stage_io(root: Path, run_id: str, stage_id: str) -> StageIOResponse:
     return StageIOResponse(stage_id=stage_id, inputs=[], outputs=[])
 
 
-def _count_csv_rows(path: Path, status_key: str = "match_status") -> tuple[int, dict[str, int]]:
+def _count_csv_rows(
+    path: Path, status_key: str = "match_status"
+) -> tuple[int, dict[str, int]]:
     if not path.exists() or not path.is_file():
         return 0, {}
     with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
@@ -735,7 +753,9 @@ def _preview_xlsx(file_path: Path, limit: int, offset: int) -> CsvPreviewRespons
         workbook.close()
 
 
-def _save_upload_files(paths_run_inputs: Path, files: list[UploadFile]) -> list[UploadSavedItem]:
+def _save_upload_files(
+    paths_run_inputs: Path, files: list[UploadFile]
+) -> list[UploadSavedItem]:
     paths_run_inputs.mkdir(parents=True, exist_ok=True)
 
     def pick_unique_name(name: str) -> str:
@@ -787,9 +807,19 @@ def create_app(root: Path) -> FastAPI:
         stage_id = "-"
         if len(parts) >= 3 and parts[0] == "api" and parts[1] == "runs":
             run_id = parts[2] or "-"
-        if len(parts) >= 5 and parts[0] == "api" and parts[1] == "runs" and parts[3] == "logs":
+        if (
+            len(parts) >= 5
+            and parts[0] == "api"
+            and parts[1] == "runs"
+            and parts[3] == "logs"
+        ):
             stage_id = parts[4] or "-"
-        if len(parts) >= 6 and parts[0] == "api" and parts[1] == "runs" and parts[3] == "stages":
+        if (
+            len(parts) >= 6
+            and parts[0] == "api"
+            and parts[1] == "runs"
+            and parts[3] == "stages"
+        ):
             stage_id = parts[4] or "-"
         return run_id, stage_id
 
@@ -805,7 +835,10 @@ def create_app(root: Path) -> FastAPI:
 
     @app.middleware("http")
     async def request_log_middleware(request: Request, call_next):
-        request_id = str(request.headers.get("x-request-id", "") or "").strip() or uuid4().hex[:16]
+        request_id = (
+            str(request.headers.get("x-request-id", "") or "").strip()
+            or uuid4().hex[:16]
+        )
         token = set_request_id(request_id)
         started = perf_counter()
         req_logger = _request_logger(request, request_id)
@@ -822,7 +855,9 @@ def create_app(root: Path) -> FastAPI:
         duration_ms = (perf_counter() - started) * 1000
         response.headers["X-Request-Id"] = request_id
         status_code = int(response.status_code)
-        message = f"request completed status={status_code} duration_ms={duration_ms:.2f}"
+        message = (
+            f"request completed status={status_code} duration_ms={duration_ms:.2f}"
+        )
         if status_code >= 500:
             req_logger.bind(status_code=status_code).error(message)
         elif status_code >= 400:
@@ -838,16 +873,22 @@ def create_app(root: Path) -> FastAPI:
         req_logger = _request_logger(request, request_id)
         detail = str(exc.detail)
         if exc.status_code >= 500:
-            req_logger.bind(status_code=exc.status_code).error(f"http exception: {detail}")
+            req_logger.bind(status_code=exc.status_code).error(
+                f"http exception: {detail}"
+            )
         elif exc.status_code >= 400:
-            req_logger.bind(status_code=exc.status_code).warning(f"http exception: {detail}")
+            req_logger.bind(status_code=exc.status_code).warning(
+                f"http exception: {detail}"
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": detail, "request_id": request_id},
         )
 
     @app.exception_handler(RequestValidationError)
-    async def validation_exc_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    async def validation_exc_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
         request_id = current_request_id()
         req_logger = _request_logger(request, request_id)
         req_logger.bind(status_code=422).warning("request validation failed")
@@ -864,7 +905,9 @@ def create_app(root: Path) -> FastAPI:
     async def generic_exc_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = current_request_id()
         req_logger = _request_logger(request, request_id)
-        req_logger.bind(status_code=500).opt(exception=True).error("unhandled exception")
+        req_logger.bind(status_code=500).opt(exception=True).error(
+            "unhandled exception"
+        )
         return JSONResponse(
             status_code=500,
             content={"error": "internal server error", "request_id": request_id},
@@ -884,7 +927,9 @@ def create_app(root: Path) -> FastAPI:
 
     @app.get("/api/sources/support", response_model=SourceSupportResponse)
     async def source_support() -> SourceSupportResponse:
-        return SourceSupportResponse.model_validate({"sources": list_source_support_matrix()})
+        return SourceSupportResponse.model_validate(
+            {"sources": list_source_support_matrix()}
+        )
 
     @app.get("/api/capabilities", response_model=CapabilitiesPayloadModel)
     async def capabilities() -> CapabilitiesPayloadModel:
@@ -924,7 +969,9 @@ def create_app(root: Path) -> FastAPI:
     async def get_run(run_id: str) -> RunStateResponse:
         return _state_with_binding(root, run_id)
 
-    @app.get("/api/runs/{run_id}/profile-binding", response_model=ProfileBindingResponse)
+    @app.get(
+        "/api/runs/{run_id}/profile-binding", response_model=ProfileBindingResponse
+    )
     async def get_profile_binding(run_id: str) -> ProfileBindingResponse:
         try:
             binding = get_run_binding(root, run_id)
@@ -944,7 +991,9 @@ def create_app(root: Path) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="profile not found") from exc
 
-    @app.get("/api/profiles/{profile_id}/check", response_model=ProfileIntegrityResultModel)
+    @app.get(
+        "/api/profiles/{profile_id}/check", response_model=ProfileIntegrityResultModel
+    )
     async def check_profile(profile_id: str) -> ProfileIntegrityResultModel:
         try:
             result = check_profile_integrity(root, profile_id)
@@ -952,11 +1001,13 @@ def create_app(root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="profile not found") from exc
         return ProfileIntegrityResultModel.model_validate(result)
 
-    @app.get("/api/profiles/{profile_id}/review", response_model=ProfileReviewResponseModel)
+    @app.get(
+        "/api/profiles/{profile_id}/review", response_model=ProfileReviewResponseModel
+    )
     async def profile_review(
         profile_id: str,
         year: int | None = Query(default=None, ge=1900, le=2200),
-        months: int = Query(default=12, ge=6, le=36),
+        months: int = Query(default=12, ge=6, le=120),
     ) -> ProfileReviewResponseModel:
         try:
             result = build_profile_review(root, profile_id, year=year, months=months)
@@ -970,12 +1021,16 @@ def create_app(root: Path) -> FastAPI:
         return ArtifactsResponse.model_validate({"artifacts": artifacts})
 
     @app.get("/api/runs/{run_id}/artifact")
-    async def download_artifact(run_id: str, path: str = Query(min_length=1)) -> FileResponse:
+    async def download_artifact(
+        run_id: str, path: str = Query(min_length=1)
+    ) -> FileResponse:
         paths = make_paths(root, run_id)
         file_path = resolve_under_root(paths.run_dir, path)
         if not file_path.exists() or not file_path.is_file():
             raise HTTPException(status_code=404, detail="not found")
-        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        mime_type = (
+            mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        )
         return FileResponse(file_path, media_type=mime_type, filename=file_path.name)
 
     @app.get("/api/runs/{run_id}/preview", response_model=CsvPreviewResponse)
@@ -1019,7 +1074,9 @@ def create_app(root: Path) -> FastAPI:
 
         if suffix in {".xlsx", ".xls"}:
             if suffix == ".xls":
-                raise HTTPException(status_code=400, detail="preview supports xlsx only")
+                raise HTTPException(
+                    status_code=400, detail="preview supports xlsx only"
+                )
             return _preview_xlsx(file_path, limit=limit, offset=offset)
 
         raise HTTPException(status_code=400, detail="preview supports csv/xlsx only")
@@ -1060,8 +1117,12 @@ def create_app(root: Path) -> FastAPI:
         unmatched_count, unmatched_reasons = _count_csv_rows(unmatched_path)
         total = matched_count + unmatched_count
         match_rate = round(matched_count / total, 4) if total else 0.0
-        reasons_sorted = sorted(unmatched_reasons.items(), key=lambda item: (-item[1], item[0]))
-        reasons = [MatchReasonModel(reason=key, count=value) for key, value in reasons_sorted]
+        reasons_sorted = sorted(
+            unmatched_reasons.items(), key=lambda item: (-item[1], item[0])
+        )
+        reasons = [
+            MatchReasonModel(reason=key, count=value) for key, value in reasons_sorted
+        ]
         return MatchStatsResponse(
             stage_id=stage,
             matched=matched_count,
@@ -1071,8 +1132,12 @@ def create_app(root: Path) -> FastAPI:
             unmatched_reasons=reasons,
         )
 
-    @app.get("/api/runs/{run_id}/preview/pdf/meta", response_model=PdfPreviewMetaResponse)
-    async def pdf_meta(run_id: str, path: str = Query(min_length=1)) -> PdfPreviewMetaResponse:
+    @app.get(
+        "/api/runs/{run_id}/preview/pdf/meta", response_model=PdfPreviewMetaResponse
+    )
+    async def pdf_meta(
+        run_id: str, path: str = Query(min_length=1)
+    ) -> PdfPreviewMetaResponse:
         paths = make_paths(root, run_id)
         file_path = resolve_under_root(paths.run_dir, path)
         if not file_path.exists() or not file_path.is_file():
@@ -1115,7 +1180,9 @@ def create_app(root: Path) -> FastAPI:
         return Response(content=data, media_type="image/png")
 
     @app.post("/api/runs", response_model=RunCreateResponse)
-    async def create_run_api(payload: CreateRunPayload | None = Body(default=None)) -> RunCreateResponse:
+    async def create_run_api(
+        payload: CreateRunPayload | None = Body(default=None),
+    ) -> RunCreateResponse:
         paths = create_run(root)
         run_id = paths.run_dir.name
         run_name = payload.name.strip()[:80] if payload else ""
@@ -1124,7 +1191,9 @@ def create_app(root: Path) -> FastAPI:
             state["name"] = run_name
             save_state(paths, state)
         ctx.logger.bind(run_id=run_id, stage_id="-").info("已创建 Run")
-        return RunCreateResponse.model_validate(_state_with_binding(root, run_id).model_dump())
+        return RunCreateResponse.model_validate(
+            _state_with_binding(root, run_id).model_dump()
+        )
 
     @app.post("/api/profiles", response_model=ProfileModel)
     async def create_profile_api(payload: CreateProfilePayload) -> ProfileModel:
@@ -1140,7 +1209,9 @@ def create_app(root: Path) -> FastAPI:
         try:
             profile = add_bill_from_run(root, profile_id, payload.run_id, **kwargs)
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="profile or run not found") from exc
+            raise HTTPException(
+                status_code=404, detail="profile or run not found"
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ProfileModel.model_validate(profile)
@@ -1148,7 +1219,9 @@ def create_app(root: Path) -> FastAPI:
     @app.post("/api/profiles/{profile_id}/bills/remove", response_model=ProfileModel)
     async def remove_bill(profile_id: str, payload: RemoveBillsPayload) -> ProfileModel:
         try:
-            profile = remove_bills(root, profile_id, period_key=payload.period_key, run_id=payload.run_id)
+            profile = remove_bills(
+                root, profile_id, period_key=payload.period_key, run_id=payload.run_id
+            )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="profile not found") from exc
         except ValueError as exc:
@@ -1156,9 +1229,13 @@ def create_app(root: Path) -> FastAPI:
         return ProfileModel.model_validate(profile)
 
     @app.post("/api/profiles/{profile_id}/bills/reimport", response_model=ProfileModel)
-    async def reimport_bill_api(profile_id: str, payload: ReimportBillPayload) -> ProfileModel:
+    async def reimport_bill_api(
+        profile_id: str, payload: ReimportBillPayload
+    ) -> ProfileModel:
         try:
-            profile = reimport_bill(root, profile_id, period_key=payload.period_key, run_id=payload.run_id)
+            profile = reimport_bill(
+                root, profile_id, period_key=payload.period_key, run_id=payload.run_id
+            )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -1166,7 +1243,9 @@ def create_app(root: Path) -> FastAPI:
         return ProfileModel.model_validate(profile)
 
     @app.post("/api/runs/{run_id}/upload", response_model=UploadResponse)
-    async def upload_files(run_id: str, request: Request, files: list[UploadFile] = File(...)) -> UploadResponse:
+    async def upload_files(
+        run_id: str, request: Request, files: list[UploadFile] = File(...)
+    ) -> UploadResponse:
         paths = make_paths(root, run_id)
         if not paths.run_dir.exists():
             raise HTTPException(status_code=404, detail="run not found")
@@ -1177,7 +1256,10 @@ def create_app(root: Path) -> FastAPI:
         total_bytes = int(content_length)
         max_bytes = ctx.settings.max_upload_bytes
         if total_bytes > max_bytes:
-            raise HTTPException(status_code=413, detail=f"payload too large: {total_bytes} > {max_bytes}")
+            raise HTTPException(
+                status_code=413,
+                detail=f"payload too large: {total_bytes} > {max_bytes}",
+            )
 
         saved = _save_upload_files(paths.inputs_dir, files)
         state = get_state(paths)
@@ -1196,7 +1278,9 @@ def create_app(root: Path) -> FastAPI:
                 try:
                     set_run_binding(root, run_id, legacy_profile)
                 except FileNotFoundError as exc:
-                    raise HTTPException(status_code=404, detail="run or profile not found") from exc
+                    raise HTTPException(
+                        status_code=404, detail="run or profile not found"
+                    ) from exc
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
             else:
@@ -1204,8 +1288,14 @@ def create_app(root: Path) -> FastAPI:
                     clear_run_binding(root, run_id)
                 except FileNotFoundError:
                     pass
-        ctx.runner.start(run_id, stages=payload.stages, options=cast(dict[str, object], options_payload))
-        ctx.logger.bind(run_id=run_id, stage_id="-").info(f"已请求启动 Run（stages={payload.stages or 'all'}）")
+        ctx.runner.start(
+            run_id,
+            stages=payload.stages,
+            options=cast(dict[str, object], options_payload),
+        )
+        ctx.logger.bind(run_id=run_id, stage_id="-").info(
+            f"已请求启动 Run（stages={payload.stages or 'all'}）"
+        )
         return RunStartResponse(ok=True, run_id=run_id)
 
     @app.post("/api/runs/{run_id}/cancel", response_model=CancelResponse)
@@ -1219,7 +1309,9 @@ def create_app(root: Path) -> FastAPI:
         if ctx.runner.is_running(run_id):
             raise HTTPException(status_code=409, detail="run is running")
         if payload.scope != "classify":
-            raise HTTPException(status_code=400, detail=f"unknown scope: {payload.scope}")
+            raise HTTPException(
+                status_code=400, detail=f"unknown scope: {payload.scope}"
+            )
 
         paths = make_paths(root, run_id)
         state = get_state(paths)
@@ -1253,7 +1345,9 @@ def create_app(root: Path) -> FastAPI:
         return ResetResponse(ok=True, scope=payload.scope)
 
     @app.post("/api/runs/{run_id}/review/updates", response_model=ReviewUpdateResponse)
-    async def update_review(run_id: str, payload: ReviewUpdatesPayload) -> ReviewUpdateResponse:
+    async def update_review(
+        run_id: str, payload: ReviewUpdatesPayload
+    ) -> ReviewUpdateResponse:
         paths = make_paths(root, run_id)
         review_path = paths.out_dir / "classify" / "review.csv"
         if not review_path.exists():
@@ -1269,7 +1363,12 @@ def create_app(root: Path) -> FastAPI:
                 raise HTTPException(status_code=400, detail="review.csv missing txn_id")
             rows = list(reader)
 
-        editable_fields = {"final_category_id", "final_note", "final_ignored", "final_ignore_reason"}
+        editable_fields = {
+            "final_category_id",
+            "final_note",
+            "final_ignored",
+            "final_ignore_reason",
+        }
         editable_fields = {name for name in editable_fields if name in set(fieldnames)}
 
         for row in rows:
@@ -1295,34 +1394,53 @@ def create_app(root: Path) -> FastAPI:
             writer.writerows(rows)
         temp_path.replace(review_path)
 
-        ctx.logger.bind(run_id=run_id, stage_id="-").info(f"已更新 review.csv 行数={len(update_map)}")
+        ctx.logger.bind(run_id=run_id, stage_id="-").info(
+            f"已更新 review.csv 行数={len(update_map)}"
+        )
         return ReviewUpdateResponse(ok=True, updated=len(update_map))
 
     @app.put("/api/config/classifier", response_model=ConfigWriteResponse)
-    async def update_global_classifier(payload: JsonObjectPayload) -> ConfigWriteResponse:
+    async def update_global_classifier(
+        payload: JsonObjectPayload,
+    ) -> ConfigWriteResponse:
         cfg_path = global_classifier_write_path(root)
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg_path.write_text(json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        cfg_path.write_text(
+            json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         ctx.logger.bind(run_id="-", stage_id="-").info("已更新全局分类器配置")
         return ConfigWriteResponse(ok=True)
 
     @app.put("/api/config/card-aliases", response_model=ConfigWriteResponse)
-    async def update_card_alias_config(payload: JsonObjectPayload) -> ConfigWriteResponse:
+    async def update_card_alias_config(
+        payload: JsonObjectPayload,
+    ) -> ConfigWriteResponse:
         cfg_path = card_alias_write_path(root)
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg_path.write_text(json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        cfg_path.write_text(
+            json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         ctx.logger.bind(run_id="-", stage_id="-").info("已更新借记卡续卡映射配置")
         return ConfigWriteResponse(ok=True)
 
     @app.put("/api/runs/{run_id}/config/classifier", response_model=ConfigWriteResponse)
-    async def update_run_classifier(run_id: str, payload: JsonObjectPayload) -> ConfigWriteResponse:
+    async def update_run_classifier(
+        run_id: str, payload: JsonObjectPayload
+    ) -> ConfigWriteResponse:
         cfg = make_paths(root, run_id).config_dir / "classifier.json"
-        cfg.write_text(json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        cfg.write_text(
+            json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         ctx.logger.bind(run_id=run_id, stage_id="-").info("已更新本次 Run 的分类器配置")
         return ConfigWriteResponse(ok=True)
 
     @app.put("/api/runs/{run_id}/options", response_model=ConfigWriteResponse)
-    async def update_options(run_id: str, payload: RunOptionsPatch) -> ConfigWriteResponse:
+    async def update_options(
+        run_id: str, payload: RunOptionsPatch
+    ) -> ConfigWriteResponse:
         options_payload = payload.model_dump(exclude_unset=True)
 
         legacy_profile_value = options_payload.pop("profile_id", None)
@@ -1334,7 +1452,9 @@ def create_app(root: Path) -> FastAPI:
                 else:
                     clear_run_binding(root, run_id)
             except FileNotFoundError as exc:
-                raise HTTPException(status_code=404, detail="run or profile not found") from exc
+                raise HTTPException(
+                    status_code=404, detail="run or profile not found"
+                ) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1345,23 +1465,37 @@ def create_app(root: Path) -> FastAPI:
         options.pop("profile_id", None)
         state["options"] = options
         save_state(paths, state)
-        ctx.logger.bind(run_id=run_id, stage_id="-").info(f"已更新 options: {options_payload}")
+        ctx.logger.bind(run_id=run_id, stage_id="-").info(
+            f"已更新 options: {options_payload}"
+        )
         return ConfigWriteResponse(ok=True)
 
-    @app.put("/api/runs/{run_id}/profile-binding", response_model=SetProfileBindingResponse)
-    async def update_profile_binding(run_id: str, payload: SetProfileBindingPayload) -> SetProfileBindingResponse:
+    @app.put(
+        "/api/runs/{run_id}/profile-binding", response_model=SetProfileBindingResponse
+    )
+    async def update_profile_binding(
+        run_id: str, payload: SetProfileBindingPayload
+    ) -> SetProfileBindingResponse:
         try:
             binding = set_run_binding(root, run_id, payload.profile_id.strip())
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="run or profile not found") from exc
+            raise HTTPException(
+                status_code=404, detail="run or profile not found"
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return SetProfileBindingResponse(ok=True, binding=RunBindingModel.model_validate(binding))
+        return SetProfileBindingResponse(
+            ok=True, binding=RunBindingModel.model_validate(binding)
+        )
 
     @app.put("/api/profiles/{profile_id}", response_model=ProfileModel)
-    async def update_profile_api(profile_id: str, payload: UpdateProfilePayload) -> ProfileModel:
+    async def update_profile_api(
+        profile_id: str, payload: UpdateProfilePayload
+    ) -> ProfileModel:
         try:
-            profile = update_profile(root, profile_id, payload.model_dump(exclude_unset=True))
+            profile = update_profile(
+                root, profile_id, payload.model_dump(exclude_unset=True)
+            )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="profile not found") from exc
         return ProfileModel.model_validate(profile)
@@ -1380,7 +1514,9 @@ def create_app(root: Path) -> FastAPI:
     return app
 
 
-def serve(root: Path, host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True) -> None:
+def serve(
+    root: Path, host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True
+) -> None:
     settings: Settings = load_settings()
     setup_logging(settings)
     app = create_app(root)
@@ -1402,7 +1538,12 @@ def serve(root: Path, host: str = "127.0.0.1", port: int = 8000, open_browser: b
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     settings = load_settings()
-    serve(root=root, host=settings.host, port=settings.port, open_browser=settings.open_browser)
+    serve(
+        root=root,
+        host=settings.host,
+        port=settings.port,
+        open_browser=settings.open_browser,
+    )
 
 
 if __name__ == "__main__":

@@ -362,9 +362,17 @@ def _build_detail_to_group_map(
 
 
 def _is_refund_like(direction: str, item: str, status: str, category: str) -> bool:
-    if "退款" in (item or "") or "退款" in (status or "") or "退款" in (category or ""):
+    text = " ".join(
+        [
+            str(item or "").strip(),
+            str(status or "").strip(),
+            str(category or "").strip(),
+        ]
+    )
+    if "退款" in text or "退回" in text or "冲正" in text:
         return True
-    if direction in {"收入", "不计收支"}:
+    # “不计收支”在钱包导出里常见于退款回退，但普通“收入”不应被视为退款。
+    if direction == "不计收支" and ("退款" in text or "退回" in text):
         return True
     return False
 
@@ -704,9 +712,13 @@ def _bank_rows(
 
     def flow(row: pd.Series) -> str:
         summary = str(row.get("summary", "")).strip()
+        counterparty = str(row.get("counterparty", "")).strip()
+        text = f"{summary} {counterparty}".strip()
         amt: Decimal = row["amount_dec"]
         if "退款" in summary and amt > 0:
             return "refund"
+        if amt > 0 and any(k in text for k in ["代发工资", "工资", "薪资", "薪金", "奖金", "补贴", "报销", "津贴"]):
+            return "income"
         if "支付" in summary and amt < 0:
             return "expense"
         if "转账" in summary or "转入" in summary or "转出" in summary:
