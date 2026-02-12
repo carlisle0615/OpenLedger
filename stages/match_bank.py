@@ -17,11 +17,12 @@
 from __future__ import annotations
 
 import itertools
+import json
 import re
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterable, Mapping, Sequence
 
 import pandas as pd
 from rapidfuzz import fuzz
@@ -50,6 +51,7 @@ SUM_AMOUNT_TOL = Decimal("0.01")
 FUZZY_AMOUNT_TOL = Decimal("0.05")
 FUZZY_MIN_SIM = 60
 MAX_FALLBACK_DAY_DIFF = 7
+CARD_LAST4_RE = re.compile(r"^\d{4}$")
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -76,6 +78,106 @@ DEBIT_LAST4_RE = re.compile(r"储蓄卡\((\d{4})\)")
 def _extract_debit_last4(pay_method: Any) -> str | None:
     m = DEBIT_LAST4_RE.search(str(pay_method))
     return m.group(1) if m else None
+
+
+def _normalize_card_last4(value: Any) -> str | None:
+    s = str(value or "").strip()
+    if not CARD_LAST4_RE.fullmatch(s):
+        return None
+    return s
+
+
+def _normalize_card_aliases(raw_aliases: Mapping[str, Any] | None) -> dict[str, list[str]]:
+    if not raw_aliases:
+        return {}
+    out: dict[str, list[str]] = {}
+    for raw_key, raw_values in raw_aliases.items():
+        key = _normalize_card_last4(raw_key)
+        if not key:
+            continue
+        values: Sequence[Any]
+        if isinstance(raw_values, (list, tuple, set)):
+            values = list(raw_values)
+        else:
+            values = [raw_values]
+        normalized_values: list[str] = []
+        seen: set[str] = set()
+        for raw_v in values:
+            alias = _normalize_card_last4(raw_v)
+            if not alias or alias == key or alias in seen:
+                continue
+            seen.add(alias)
+            normalized_values.append(alias)
+        if normalized_values:
+            out[key] = normalized_values
+    return out
+
+
+def _build_card_alias_groups(card_aliases: Mapping[str, Sequence[str]] | None) -> dict[str, frozenset[str]]:
+    aliases = _normalize_card_aliases(card_aliases)
+    if not aliases:
+        return {}
+
+    graph: dict[str, set[str]] = {}
+    for key, values in aliases.items():
+        graph.setdefault(key, set()).add(key)
+        for value in values:
+            graph.setdefault(key, set()).add(value)
+            graph.setdefault(value, set()).add(key)
+            graph.setdefault(value, set()).add(value)
+
+    groups: dict[str, frozenset[str]] = {}
+    visited: set[str] = set()
+    for node in graph:
+        if node in visited:
+            continue
+        stack = [node]
+        component: set[str] = set()
+        while stack:
+            cur = stack.pop()
+            if cur in component:
+                continue
+            component.add(cur)
+            for nxt in graph.get(cur, set()):
+                if nxt not in component:
+                    stack.append(nxt)
+        visited.update(component)
+        component_fs = frozenset(component)
+        for item in component:
+            groups[item] = component_fs
+    return groups
+
+
+def _resolve_card_pool(account_last4: str, alias_groups: Mapping[str, frozenset[str]]) -> frozenset[str]:
+    normalized = _normalize_card_last4(account_last4)
+    if not normalized:
+        return frozenset()
+    return alias_groups.get(normalized, frozenset({normalized}))
+
+
+def _load_card_aliases(config_path: Path) -> dict[str, list[str]]:
+    if not config_path.exists():
+        return {}
+    try:
+        raw_obj = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"卡号别名配置 JSON 无法解析: {config_path}") from exc
+    if not isinstance(raw_obj, dict):
+        raise ValueError(f"卡号别名配置必须是 JSON 对象: {config_path}")
+
+    alias_obj: Mapping[str, Any] | None
+    if "debit_card_aliases" in raw_obj:
+        nested = raw_obj.get("debit_card_aliases")
+        if nested is None:
+            return {}
+        if not isinstance(nested, dict):
+            raise ValueError(
+                f"卡号别名配置字段 debit_card_aliases 必须是对象: {config_path}"
+            )
+        alias_obj = nested
+    else:
+        alias_obj = raw_obj
+    return _normalize_card_aliases(alias_obj)
 
 
 def _is_refund_detail(detail_row: pd.Series) -> bool:
@@ -256,8 +358,10 @@ def match_bank_statements(
     alipay_csv: Path,
     out_dir: Path,
     max_day_diff: int = 1,
+    card_aliases: Mapping[str, Sequence[str]] | None = None,
 ) -> None:
     details = _build_detail_df(wechat_csv, alipay_csv)
+    alias_groups = _build_card_alias_groups(card_aliases)
     used_detail_idx: set[int] = set()
 
     enriched_rows: list[dict[str, Any]] = []
@@ -332,6 +436,7 @@ def match_bank_statements(
                 debug_rows.append(debug)
                 continue
 
+            card_pool = _resolve_card_pool(account_last4, alias_groups)
             amount_abs: Decimal = row["amount_abs"]
             base_date: date = row["trans_date_dt"]
             candidates = pd.DataFrame()
@@ -343,12 +448,12 @@ def match_bank_statements(
             for day_window in window_steps:
                 date_set = {base_date + timedelta(days=d) for d in range(-day_window, day_window + 1)}
                 cand = details[
-                    (details["debit_last4"] == account_last4)
+                    (details["debit_last4"].isin(card_pool))
                     & (details["amount_abs"] == amount_abs)
                     & (details["trans_date_dt"].isin(date_set))
                 ]
                 cand_sum = details[
-                    (details["debit_last4"] == account_last4)
+                    (details["debit_last4"].isin(card_pool))
                     & (details["amount_abs"] <= amount_abs)
                     & (details["trans_date_dt"].isin(date_set))
                 ]
@@ -415,7 +520,7 @@ def match_bank_statements(
                     date_set = {base_date + timedelta(days=d) for d in range(-day_window, day_window + 1)}
                     amount_diff = details["amount_abs"].map(lambda d: abs(d - amount_abs))
                     cand_fuzzy = details[
-                        (details["debit_last4"] == account_last4)
+                        (details["debit_last4"].isin(card_pool))
                         & (details["trans_date_dt"].isin(date_set))
                         & (amount_diff <= FUZZY_AMOUNT_TOL)
                     ]
@@ -592,6 +697,15 @@ def main() -> None:
     parser.add_argument("--alipay", type=Path, default=Path("output/alipay.normalized.csv"))
     parser.add_argument("--out-dir", type=Path, default=Path("output"), help="输出目录。")
     parser.add_argument("--max-day-diff", type=int, default=1)
+    parser.add_argument(
+        "--card-alias-map",
+        type=Path,
+        default=Path("config/card_aliases.local.json"),
+        help=(
+            "借记卡尾号别名配置 JSON；默认读取 config/card_aliases.local.json。"
+            "示例：{\"debit_card_aliases\":{\"1234\":[\"5678\"]}}"
+        ),
+    )
     parser.add_argument("bank_csv", type=Path, nargs="*")
     args = parser.parse_args()
 
@@ -617,12 +731,17 @@ def main() -> None:
             "或手动把 bank 类型的 *.transactions.csv 作为参数传入。"
         )
 
+    card_aliases = _load_card_aliases(args.card_alias_map)
+    if card_aliases:
+        log("match_bank", f"已加载借记卡别名映射: {len(card_aliases)} 组（{args.card_alias_map}）")
+
     match_bank_statements(
         bank_csvs=bank_csvs,
         wechat_csv=args.wechat,
         alipay_csv=args.alipay,
         out_dir=args.out_dir,
         max_day_diff=args.max_day_diff,
+        card_aliases=card_aliases,
     )
 
 

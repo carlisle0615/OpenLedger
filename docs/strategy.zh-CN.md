@@ -1,6 +1,8 @@
 
-
 # 多渠道交叉记账方案（经核实修正版）
+
+> 说明：本文是策略讨论文档，偏“方案思路”。  
+> 当前已落地实现请以 `README.md` 与 `docs/architecture.md` 为准（尤其是 FastAPI API、用户账期管理/审阅架构）。
 
 ## 数据源可行性矩阵
 
@@ -89,4 +91,3 @@
 - **PDF 解析**：pdfplumber（Python库）— 招行 PDF 账单格式规整，表格提取可靠
 - **交叉匹配**：Pandas（Python）— 按日期+金额做 merge
 - **记账输出**：Beancount 或直接输出 Excel，看你偏好
-

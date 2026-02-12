@@ -39,6 +39,9 @@ OpenLedger 是一个本地优先的个人财务分析工具。它支持导入 **
 - PDF 解析模式：支持 `auto` 自动识别与扩展解析器
 - 多源回填：信用卡/借记卡账单与微信/支付宝明细交叉匹配
 - 审核友好：生成 `review.csv` 支持人工修订再汇总
+- 用户档案与账期归档：SQLite SSOT 管理 `用户 / 账期 / run 绑定`
+- 账期审阅：内置异常检测、分类分布图、环比同比与年度汇总
+- 可视化配置中心：以表单形式编辑全局分类配置（非纯 JSON 文本）
 
 ## 快速开始
 
@@ -60,6 +63,8 @@ export OPENROUTER_API_KEY=your_key
 `lsp` 的 Provider / model / base_url 等字段说明见 `docs/lsp.md`。
 
 ### 3) Docker Compose（本地一键启动）
+
+先配置根目录 `.env`（可从 `.env.example` 复制），并填入所用 Provider 的 Key。`docker-compose.yml` 会自动透传这些变量到容器内分类阶段。
 
 ```bash
 docker compose up --build
@@ -108,8 +113,22 @@ UI 支持：
 - 编辑 `classifier.json`
 - 审核 `review.csv` 并生成最终结果
 - CSV/XLSX 表格预览与 PDF 缩略图预览（减少频繁下载）
+- 用户页二级菜单：
+  - 账期管理：绑定任务、手动归档、重导、删除、一致性检查
+  - 账期审阅：KPI、分类环图、月度趋势（环比/同比）、年度汇总、异常列表
 
 前端请通过 `pnpm dev` 单独启动（后端不托管前端静态资源）。
+
+## 当前架构（简版）
+
+- 前端：React + TypeScript + Vite（`web/`）
+- 后端：FastAPI（`openledger/server.py`）
+- 编排：`openledger/workflow.py` 调度 `stages/`（Python + Node）
+- 存储：
+  - 运行态：`runs/<run_id>/state.json` + `inputs/output/logs/config`
+  - 归档态：`profiles.db`（`profiles / bills / run_bindings`）
+
+完整说明见 `docs/architecture.md`。
 
 ## 命令行流水线
 

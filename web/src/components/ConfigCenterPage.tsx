@@ -68,6 +68,15 @@ type ClassifierConfigShape = {
     [key: string]: unknown;
 };
 
+type CardAliasConfig = {
+    debit_card_aliases: Record<string, string[]>;
+};
+
+type CardAliasRow = {
+    primary: string;
+    aliasesText: string;
+};
+
 const RULE_FIELD_OPTIONS: Array<{ id: string; label: string }> = [
     { id: "merchant", label: "商户" },
     { id: "item", label: "项目" },
@@ -246,6 +255,57 @@ function validateConfig(config: ClassifierConfigShape): string | null {
     return null;
 }
 
+function normalizeCardAliasConfig(raw: unknown): CardAliasConfig {
+    if (!isObject(raw)) {
+        return { debit_card_aliases: {} };
+    }
+    const nested = isObject(raw.debit_card_aliases) ? raw.debit_card_aliases : raw;
+    const out: Record<string, string[]> = {};
+    Object.entries(nested).forEach(([k, v]) => {
+        const key = asString(k).trim();
+        if (!/^\d{4}$/.test(key)) return;
+        const values = Array.isArray(v) ? v : [v];
+        const aliases = values
+            .map((item) => asString(item).trim())
+            .filter((item) => /^\d{4}$/.test(item) && item !== key);
+        if (!aliases.length) return;
+        out[key] = Array.from(new Set(aliases));
+    });
+    return { debit_card_aliases: out };
+}
+
+function aliasesToRows(config: CardAliasConfig): CardAliasRow[] {
+    return Object.entries(config.debit_card_aliases)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([primary, aliases]) => ({
+            primary,
+            aliasesText: aliases.join(", "),
+        }));
+}
+
+function rowsToAliasConfig(rows: CardAliasRow[]): CardAliasConfig {
+    const out: Record<string, string[]> = {};
+    rows.forEach((row) => {
+        const primary = row.primary.trim();
+        if (!primary) return;
+        if (!/^\d{4}$/.test(primary)) {
+            throw new Error(`主卡尾号必须是 4 位数字：${primary}`);
+        }
+        const aliases = row.aliasesText
+            .split(/[,\s，]+/)
+            .map((item) => item.trim())
+            .filter(Boolean);
+        const normalized = Array.from(
+            new Set(aliases.filter((item) => /^\d{4}$/.test(item) && item !== primary)),
+        );
+        if (!normalized.length) {
+            throw new Error(`请为主卡尾号 ${primary} 至少填写一个续卡尾号`);
+        }
+        out[primary] = normalized;
+    });
+    return { debit_card_aliases: out };
+}
+
 function TextListEditor(props: {
     title: string;
     description: string;
@@ -310,8 +370,11 @@ function TextListEditor(props: {
 
 export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
     const [config, setConfig] = React.useState<ClassifierConfigShape | null>(null);
+    const [cardAliasRows, setCardAliasRows] = React.useState<CardAliasRow[]>([]);
     const [loading, setLoading] = React.useState(false);
+    const [aliasLoading, setAliasLoading] = React.useState(false);
     const [saving, setSaving] = React.useState(false);
+    const [aliasSaving, setAliasSaving] = React.useState(false);
     const [error, setError] = React.useState("");
     const [success, setSuccess] = React.useState("");
     const [loadedAt, setLoadedAt] = React.useState("");
@@ -338,19 +401,27 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
     const loadConfig = React.useCallback(async () => {
         if (!baseUrl.trim()) return;
         setLoading(true);
+        setAliasLoading(true);
         setError("");
         setSuccess("");
         try {
-            const raw = await api<unknown>(baseUrl, "/api/config/classifier");
-            const normalized = normalizeConfig(raw);
+            const [rawClassifier, rawAliases] = await Promise.all([
+                api<unknown>(baseUrl, "/api/config/classifier"),
+                api<unknown>(baseUrl, "/api/config/card-aliases").catch(() => ({ debit_card_aliases: {} })),
+            ]);
+            const normalized = normalizeConfig(rawClassifier);
+            const aliasConfig = normalizeCardAliasConfig(rawAliases);
             setConfig(normalized);
+            setCardAliasRows(aliasesToRows(aliasConfig));
             setJsonText(JSON.stringify(normalized, null, 2));
             setLoadedAt(new Date().toLocaleString());
         } catch (e) {
             setError(String(e));
             setConfig(null);
+            setCardAliasRows([]);
         } finally {
             setLoading(false);
+            setAliasLoading(false);
         }
     }, [baseUrl]);
 
@@ -492,6 +563,41 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
             setError(String(e));
         } finally {
             setSaving(false);
+        }
+    }
+
+    function updateCardAliasRow(index: number, patch: Partial<CardAliasRow>) {
+        setCardAliasRows((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+        setSuccess("");
+    }
+
+    function addCardAliasRow() {
+        setCardAliasRows((prev) => [...prev, { primary: "", aliasesText: "" }]);
+        setSuccess("");
+    }
+
+    function removeCardAliasRow(index: number) {
+        setCardAliasRows((prev) => prev.filter((_, i) => i !== index));
+        setSuccess("");
+    }
+
+    async function saveCardAliases() {
+        setAliasSaving(true);
+        setError("");
+        setSuccess("");
+        try {
+            const payload = rowsToAliasConfig(cardAliasRows);
+            await api<{ ok: boolean }>(baseUrl, "/api/config/card-aliases", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            setCardAliasRows(aliasesToRows(payload));
+            setSuccess("续卡映射已保存。")
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setAliasSaving(false);
         }
     }
 
@@ -673,6 +779,57 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
                                 />
                             </div>
                         </div>
+                    </CardContent>
+                </Card>
+
+                <Card className="xl:col-span-2">
+                    <CardHeader className="py-3">
+                        <div className="flex items-center justify-between gap-2">
+                            <div>
+                                <CardTitle className="text-base">借记卡续卡映射</CardTitle>
+                                <div className="text-xs text-muted-foreground mt-1">
+                                    处理“换卡/续卡后尾号变化”导致的匹配失败。例如：主卡 1234，历史尾号 5678。
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button size="sm" variant="outline" className="h-7 px-2" onClick={addCardAliasRow} disabled={aliasLoading || aliasSaving}>
+                                    <Plus className="h-3.5 w-3.5 mr-1" />新增映射
+                                </Button>
+                                <Button size="sm" className="h-7 px-2" onClick={() => void saveCardAliases()} disabled={aliasLoading || aliasSaving}>
+                                    <Save className="h-3.5 w-3.5 mr-1" />保存映射
+                                </Button>
+                            </div>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                        <div className="grid grid-cols-[160px_1fr_auto] gap-2 text-xs text-muted-foreground">
+                            <div>当前主卡尾号</div>
+                            <div>同一卡历史/续卡尾号（逗号分隔）</div>
+                            <div>操作</div>
+                        </div>
+                        <ScrollArea className="h-[180px] pr-2">
+                            <div className="space-y-2">
+                                {cardAliasRows.length ? cardAliasRows.map((row, idx) => (
+                                    <div key={`card_alias_${idx}`} className="grid grid-cols-[160px_1fr_auto] gap-2 items-center">
+                                        <Input
+                                            value={row.primary}
+                                            onChange={(e) => updateCardAliasRow(idx, { primary: e.target.value })}
+                                            placeholder="例如 1234"
+                                            className="h-8 text-xs font-mono"
+                                        />
+                                        <Input
+                                            value={row.aliasesText}
+                                            onChange={(e) => updateCardAliasRow(idx, { aliasesText: e.target.value })}
+                                            placeholder="例如 5678, 9012"
+                                            className="h-8 text-xs font-mono"
+                                        />
+                                        <Button size="sm" variant="ghost" className="h-8 px-2" onClick={() => removeCardAliasRow(idx)}>
+                                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                        </Button>
+                                    </div>
+                                )) : <div className="text-xs text-muted-foreground">暂无映射，默认严格按同尾号匹配。</div>}
+                            </div>
+                        </ScrollArea>
                     </CardContent>
                 </Card>
             </div>

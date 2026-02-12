@@ -29,7 +29,12 @@ from .capabilities import (
     get_pdf_parser_health,
     list_source_support_matrix,
 )
-from .config import global_classifier_write_path, resolve_global_classifier_config
+from .config import (
+    card_alias_write_path,
+    global_classifier_write_path,
+    resolve_card_alias_config,
+    resolve_global_classifier_config,
+)
 from .files import safe_filename
 from .logger import current_request_id, get_logger, reset_request_id, set_request_id, setup_logging
 from .parsers.pdf import list_pdf_modes
@@ -892,6 +897,13 @@ def create_app(root: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="config not found")
         return _read_json_object(cfg_path)
 
+    @app.get("/api/config/card-aliases")
+    async def get_card_alias_config() -> dict[str, JsonValue]:
+        cfg_path = resolve_card_alias_config(root)
+        if not cfg_path.exists():
+            return {"debit_card_aliases": {}}
+        return _read_json_object(cfg_path)
+
     @app.get("/api/runs", response_model=RunsResponse)
     async def get_runs() -> RunsResponse:
         run_ids = list_runs(root)
@@ -1292,6 +1304,14 @@ def create_app(root: Path) -> FastAPI:
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
         cfg_path.write_text(json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         ctx.logger.bind(run_id="-", stage_id="-").info("已更新全局分类器配置")
+        return ConfigWriteResponse(ok=True)
+
+    @app.put("/api/config/card-aliases", response_model=ConfigWriteResponse)
+    async def update_card_alias_config(payload: JsonObjectPayload) -> ConfigWriteResponse:
+        cfg_path = card_alias_write_path(root)
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(payload.root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        ctx.logger.bind(run_id="-", stage_id="-").info("已更新借记卡续卡映射配置")
         return ConfigWriteResponse(ok=True)
 
     @app.put("/api/runs/{run_id}/config/classifier", response_model=ConfigWriteResponse)

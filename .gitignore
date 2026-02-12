@@ -10,6 +10,7 @@ __pycache__/
 config/classifier.private.json
 config/classifier.local.json
 config/classifier.public.json
+config/card_aliases.local.json
 private/
 
 # Local outputs / intermediate artifacts

@@ -48,6 +48,7 @@ BANK_UNMATCHED_COLUMNS = required_columns(ART_BANK_UNMATCHED)
 WECHAT_NORMALIZED_COLUMNS = required_columns(ART_WECHAT_NORMALIZED)
 ALIPAY_NORMALIZED_COLUMNS = required_columns(ART_ALIPAY_NORMALIZED)
 UNIFIED_COLUMNS = required_columns(ART_UNIFIED_TX)
+WALLET_PRIMARY_SOURCES = {"wechat", "alipay"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -783,6 +784,26 @@ def _bank_rows(
     return out
 
 
+def _drop_wallet_rows_if_merged(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if df.empty:
+        return df, 0
+    primary_source = df.get("primary_source", pd.Series("", index=df.index)).astype(str).str.strip()
+    match_group_id = df.get("match_group_id", pd.Series("", index=df.index)).astype(str).str.strip()
+
+    is_wallet = primary_source.isin(WALLET_PRIMARY_SOURCES)
+    valid_group = match_group_id != ""
+    bill_groups = set(match_group_id[(~is_wallet) & valid_group].tolist())
+
+    if not bill_groups:
+        return df, 0
+
+    drop_mask = is_wallet & valid_group & match_group_id.isin(bill_groups)
+    dropped = int(drop_mask.sum())
+    if dropped <= 0:
+        return df, 0
+    return df.loc[~drop_mask].copy(), dropped
+
+
 def build_unified(
     cc_enriched_path: Path,
     cc_unmatched_path: Path,
@@ -814,9 +835,12 @@ def build_unified(
         ignore_index=True,
     )
 
-    all_txn = pd.concat([cc_out, bank_out, wallet_out], ignore_index=True)
+    all_txn_raw = pd.concat([cc_out, bank_out, wallet_out], ignore_index=True)
     # 先按日期、再按时间排序（时间可能为空）。
-    all_txn = all_txn.sort_values(by=["trade_date", "trade_time", "account"], ascending=True, kind="stable")
+    all_txn_raw = all_txn_raw.sort_values(by=["trade_date", "trade_time", "account"], ascending=True, kind="stable")
+    all_txn, dropped_all = _drop_wallet_rows_if_merged(all_txn_raw)
+    if dropped_all:
+        log("build_unified", f"去重：全量移除重复 wallet 行 {dropped_all} 条（已被账单匹配覆盖）")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     xlsx_path = out_dir / "unified.transactions.xlsx"
@@ -833,12 +857,15 @@ def build_unified(
         with pd.ExcelWriter(all_xlsx_path, engine="openpyxl") as writer:
             all_txn.to_excel(writer, index=False, sheet_name="transactions")
 
-        all_txn["trade_date_dt"] = pd.to_datetime(all_txn["trade_date"], errors="coerce").dt.date
-        mask = (all_txn["trade_date_dt"] >= start_date) & (all_txn["trade_date_dt"] <= end_date)
-        filtered_txn = all_txn[mask].drop(columns=["trade_date_dt"]).copy()
+        all_txn_raw["trade_date_dt"] = pd.to_datetime(all_txn_raw["trade_date"], errors="coerce").dt.date
+        mask = (all_txn_raw["trade_date_dt"] >= start_date) & (all_txn_raw["trade_date_dt"] <= end_date)
+        filtered_txn_raw = all_txn_raw[mask].drop(columns=["trade_date_dt"]).copy()
+        filtered_txn, dropped_period = _drop_wallet_rows_if_merged(filtered_txn_raw)
         filtered_txn = filtered_txn.sort_values(by=["trade_date", "trade_time", "account"], ascending=True, kind="stable")
         log("build_unified", f"账期={label} 开始={start_date.isoformat()} 结束={end_date.isoformat()}")
         log("build_unified", f"全量行数={len(all_txn)} 筛选后行数={len(filtered_txn)}")
+        if dropped_period:
+            log("build_unified", f"去重：账期内移除重复 wallet 行 {dropped_period} 条（已被账单匹配覆盖）")
 
     filtered_txn.to_csv(csv_path, index=False, encoding="utf-8")
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
