@@ -161,3 +161,9 @@ uv run python -m tools.scaffold_pdf_parser --mode-id boc --mode-name "中国银�
 ## License
 
 MIT License. 详见 `LICENSE`。
+
+## 社区交流
+
+欢迎进群讨论 Issues、反馈问题或交流想法。
+
+<img src="群二维码.JPG" alt="交流群二维码" width="300" />
