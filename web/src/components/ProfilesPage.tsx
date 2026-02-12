@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Profile, ProfileIntegrityIssue, ProfileIntegrityResult, RunState } from "@/types";
-import { api } from "@/utils/helpers";
-import { RefreshCw, Link2, FolderPlus, AlertCircle, Trash2, User } from "lucide-react";
+import { api, type RunMeta } from "@/utils/helpers";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { RefreshCw, Link2, FolderPlus, AlertCircle, Trash2, User, Check, ChevronsUpDown } from "lucide-react";
 
 interface ProfilesPageProps {
     baseUrl: string;
@@ -30,6 +31,8 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
     const [selected, setSelected] = useState<Profile | null>(null);
     const [loadingProfile, setLoadingProfile] = useState(false);
     const [runToAttach, setRunToAttach] = useState("");
+    const [runCandidates, setRunCandidates] = useState<RunMeta[]>([]);
+    const [runPickerOpen, setRunPickerOpen] = useState(false);
     const [attachYear, setAttachYear] = useState("");
     const [attachMonth, setAttachMonth] = useState("");
     const [error, setError] = useState("");
@@ -69,6 +72,10 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
         const conflicts = Array.from(counts.entries()).filter(([, v]) => v > 1).map(([k]) => k);
         return { conflicts };
     }, [bills]);
+    const selectedRunCandidate = useMemo(
+        () => runCandidates.find((item) => String(item.id || "").trim() === runToAttach.trim()) ?? null,
+        [runCandidates, runToAttach],
+    );
 
     async function loadProfile(id: string) {
         if (!id || !baseUrl.trim()) return;
@@ -84,6 +91,22 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
             setSelected(null);
         } finally {
             setLoadingProfile(false);
+        }
+    }
+
+    async function loadRunCandidates() {
+        if (!baseUrl.trim()) return;
+        try {
+            const payload = await api<{ runs: string[]; runs_meta?: RunMeta[] }>(baseUrl, "/api/runs");
+            const fallbackMeta = Array.isArray(payload.runs)
+                ? payload.runs.map((id) => ({ id, name: "" }))
+                : [];
+            const meta = (Array.isArray(payload.runs_meta) ? payload.runs_meta : fallbackMeta)
+                .filter((item) => String(item?.id || "").trim());
+            meta.sort((a, b) => String(b.id || "").localeCompare(String(a.id || "")));
+            setRunCandidates(meta);
+        } catch (e) {
+            setError(String(e));
         }
     }
 
@@ -111,6 +134,10 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
         }
         loadProfile(selectedProfileId).catch(() => { });
     }, [selectedProfileId, baseUrl]);
+
+    useEffect(() => {
+        loadRunCandidates().catch(() => { });
+    }, [baseUrl]);
 
     useEffect(() => {
         const info = runState?.profile_archive;
@@ -160,6 +187,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
             setRunToAttach("");
             setAttachYear("");
             setAttachMonth("");
+            setRunPickerOpen(false);
         } catch (e) {
             setError(String(e));
         } finally {
@@ -319,13 +347,81 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2">
-                        <Input
-                            value={runToAttach}
-                            onChange={(e) => setRunToAttach(e.target.value)}
-                            placeholder="输入 run_id 归档"
-                            className="h-8 text-xs"
-                            disabled={!selectedProfileId || busy}
-                        />
+                        <Popover
+                            open={runPickerOpen}
+                            onOpenChange={(open) => {
+                                setRunPickerOpen(open);
+                                if (open) {
+                                    loadRunCandidates().catch(() => { });
+                                }
+                            }}
+                        >
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="outline"
+                                    role="combobox"
+                                    className="h-8 w-full justify-between text-xs"
+                                    disabled={busy}
+                                >
+                                    {selectedRunCandidate ? (
+                                        <div className="flex items-center gap-2 truncate">
+                                            <span className="font-mono">{selectedRunCandidate.id}</span>
+                                            <span className="text-muted-foreground truncate">
+                                                {selectedRunCandidate.name || "未命名任务"}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <span className="text-muted-foreground">从目录检索并选择 Run...</span>
+                                    )}
+                                    <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[460px] p-0" align="start">
+                                <Command>
+                                    <CommandInput placeholder="搜索 run_id / 任务名..." className="h-8 text-xs" />
+                                    <CommandList>
+                                        <CommandEmpty>
+                                            <div className="p-2 text-xs text-center text-muted-foreground">未找到可归档 Run</div>
+                                        </CommandEmpty>
+                                        <CommandGroup>
+                                            {runCandidates.map((item) => (
+                                                <CommandItem
+                                                    key={item.id}
+                                                    value={`${item.id} ${item.name ?? ""}`}
+                                                    className="text-xs items-start py-2"
+                                                    onSelect={() => {
+                                                        setRunToAttach(item.id);
+                                                        setRunPickerOpen(false);
+                                                    }}
+                                                >
+                                                    <Check
+                                                        className={`mr-2 mt-0.5 h-3.5 w-3.5 ${
+                                                            runToAttach.trim() === String(item.id || "").trim() ? "opacity-100" : "opacity-0"
+                                                        }`}
+                                                    />
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="font-mono break-all">{item.id}</div>
+                                                        <div className="text-[11px] text-muted-foreground break-all">
+                                                            任务名：{item.name || "未命名任务"}
+                                                        </div>
+                                                    </div>
+                                                </CommandItem>
+                                            ))}
+                                        </CommandGroup>
+                                    </CommandList>
+                                </Command>
+                            </PopoverContent>
+                        </Popover>
+                        {selectedRunCandidate ? (
+                            <div className="rounded-md border bg-muted/20 px-2 py-1.5 space-y-0.5">
+                                <div className="text-[11px] text-muted-foreground">
+                                    已选 Run：<span className="font-mono break-all" title={selectedRunCandidate.id}>{selectedRunCandidate.id}</span>
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">
+                                    任务名：<span className="break-all" title={selectedRunCandidate.name || "未命名任务"}>{selectedRunCandidate.name || "未命名任务"}</span>
+                                </div>
+                            </div>
+                        ) : null}
                         <div className="grid grid-cols-2 gap-2">
                             <Select value={attachYear || "__none__"} onValueChange={(v) => setAttachYear(v === "__none__" ? "" : v)}>
                                 <SelectTrigger className="h-8 text-xs">
@@ -364,7 +460,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
                                 onClick={() => void attachRun(runToAttach.trim())}
                                 disabled={!selectedProfileId || busy || !runToAttach.trim()}
                             >
-                                归档 run_id
+                                归档所选 Run
                             </Button>
                             {runId ? (
                                 <Button
