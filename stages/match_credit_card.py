@@ -26,35 +26,25 @@ from typing import Any, Literal
 import pandas as pd
 from rapidfuzz import fuzz
 
+from openledger.stage_contracts import (
+    ART_ALIPAY_NORMALIZED,
+    ART_CC_ENRICHED,
+    ART_CC_MATCH_DEBUG,
+    ART_CC_UNMATCHED,
+    ART_TX_BANK,
+    ART_TX_CREDIT_CARD,
+    ART_WECHAT_NORMALIZED,
+    assert_required_columns,
+    merge_with_contract_columns,
+    required_columns,
+    table_columns,
+)
+
 from ._common import log, make_parser
 
-MATCH_DEBUG_COLUMNS = [
-    "row_index",
-    "section",
-    "trans_date",
-    "post_date",
-    "amount_rmb",
-    "card_last4",
-    "description",
-    "channels_tried",
-    "base_date",
-    "date_window",
-    "candidate_count_exact",
-    "candidate_count_sum",
-    "candidate_count_fuzzy",
-    "best_date_diff_days",
-    "best_direction_penalty",
-    "best_text_similarity",
-    "best_amount_diff",
-    "match_method",
-    "match_status",
-    "match_confidence",
-    "chosen_count",
-    "chosen_channels",
-    "match_sources",
-    "chosen_trade_no",
-    "chosen_merchant_no",
-]
+CC_INPUT_REQUIRED = set(required_columns(ART_TX_CREDIT_CARD))
+BANK_INPUT_REQUIRED = set(required_columns(ART_TX_BANK))
+MATCH_DEBUG_COLUMNS = table_columns(ART_CC_MATCH_DEBUG)
 
 MAX_SUM_PARTS = 4
 SUM_AMOUNT_TOL = Decimal("0.01")
@@ -101,6 +91,18 @@ def _candidate_channels(desc: str) -> list[Literal["wechat", "alipay"]]:
 def _build_detail_df(wechat_path: Path, alipay_path: Path) -> pd.DataFrame:
     w = pd.read_csv(wechat_path, dtype=str)
     a = pd.read_csv(alipay_path, dtype=str)
+    assert_required_columns(
+        list(w.columns),
+        ART_WECHAT_NORMALIZED,
+        stage_id="match_credit_card",
+        file_path=str(wechat_path),
+    )
+    assert_required_columns(
+        list(a.columns),
+        ART_ALIPAY_NORMALIZED,
+        stage_id="match_credit_card",
+        file_path=str(alipay_path),
+    )
 
     def norm(df: pd.DataFrame, channel: str) -> pd.DataFrame:
         out = pd.DataFrame(index=df.index)
@@ -269,19 +271,9 @@ def match_credit_card(
     max_day_diff: int = 1,
 ) -> None:
     cc = pd.read_csv(credit_card_csv, dtype=str)
-    required_cols = {"section", "trans_date", "post_date", "description", "amount_rmb", "card_last4"}
-    missing = sorted(required_cols - set(cc.columns))
+    missing = sorted(CC_INPUT_REQUIRED - set(cc.columns))
     if missing:
-        bank_statement_cols = {
-            "account_last4",
-            "trans_date",
-            "currency",
-            "amount",
-            "balance",
-            "summary",
-            "counterparty",
-        }
-        is_bank_statement = bank_statement_cols.issubset(set(cc.columns))
+        is_bank_statement = BANK_INPUT_REQUIRED.issubset(set(cc.columns))
         hint = ""
         if is_bank_statement:
             hint = (
@@ -646,28 +638,8 @@ def match_credit_card(
     out_dir.mkdir(parents=True, exist_ok=True)
     matched_path = out_dir / "credit_card.enriched.csv"
     unmatched_path = out_dir / "credit_card.unmatched.csv"
-    matched_cols = cc_raw_cols + [
-        "match_status",
-        "match_method",
-        "match_sources",
-        "detail_channel",
-        "detail_trans_time",
-        "detail_trans_date",
-        "detail_direction",
-        "detail_counterparty",
-        "detail_item",
-        "detail_pay_method",
-        "detail_trade_no",
-        "detail_merchant_no",
-        "detail_status",
-        "detail_category_or_type",
-        "detail_remark",
-        "match_date_diff_days",
-        "match_direction_penalty",
-        "match_text_similarity",
-        "match_confidence",
-    ]
-    unmatched_cols = cc_raw_cols + ["match_status", "match_channels_tried", "match_method", "match_confidence"]
+    matched_cols = merge_with_contract_columns(cc_raw_cols, ART_CC_ENRICHED)
+    unmatched_cols = merge_with_contract_columns(cc_raw_cols, ART_CC_UNMATCHED)
     matched_df = pd.DataFrame(match_rows, columns=matched_cols)
     unmatched_df = pd.DataFrame(unmatched_rows, columns=unmatched_cols)
     matched_df.to_csv(matched_path, index=False, encoding="utf-8")
@@ -700,7 +672,6 @@ def main() -> None:
     if args.credit_card is None:
         import csv
 
-        required_cols = {"section", "trans_date", "post_date", "description", "amount_rmb", "card_last4"}
         candidates = sorted(Path("output").glob("*.transactions.csv"))
         matches: list[Path] = []
         for p in candidates:
@@ -710,7 +681,7 @@ def main() -> None:
                 cols = {str(x).strip() for x in header if str(x).strip()}
             except Exception:
                 continue
-            if required_cols.issubset(cols):
+            if CC_INPUT_REQUIRED.issubset(cols):
                 matches.append(p)
         if not matches:
             matches = sorted(Path("output").glob("*信用卡*.transactions.csv"))

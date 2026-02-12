@@ -19,7 +19,16 @@ from pathlib import Path
 
 import pandas as pd
 
+from openledger.stage_contracts import (
+    ART_ALIPAY_NORMALIZED,
+    ART_WECHAT_NORMALIZED,
+    table_columns,
+)
+
 from ._common import log, make_parser
+
+WECHAT_OUTPUT_COLUMNS = table_columns(ART_WECHAT_NORMALIZED)
+ALIPAY_OUTPUT_COLUMNS = table_columns(ART_ALIPAY_NORMALIZED)
 
 
 def _to_decimal_amount(value: str) -> Decimal:
@@ -81,21 +90,7 @@ def extract_wechat_xlsx(path: Path) -> pd.DataFrame:
     df["trans_date"] = df["trans_time"].dt.date
     df["amount"] = df["amount"].map(_to_decimal_amount)
 
-    keep = [
-        "channel",
-        "trans_time",
-        "trans_date",
-        "trans_type",
-        "counterparty",
-        "item",
-        "direction",
-        "amount",
-        "pay_method",
-        "status",
-        "trade_no",
-        "merchant_no",
-        "remark",
-    ]
+    keep = WECHAT_OUTPUT_COLUMNS
     for col in keep:
         if col not in df.columns:
             df[col] = ""
@@ -165,22 +160,7 @@ def extract_alipay_csv(path: Path) -> pd.DataFrame:
     df["trans_date"] = df["trans_time"].dt.date
     df["amount"] = df["amount"].map(_to_decimal_amount)
 
-    keep = [
-        "channel",
-        "trans_time",
-        "trans_date",
-        "category",
-        "counterparty",
-        "counterparty_account",
-        "item",
-        "direction",
-        "amount",
-        "pay_method",
-        "status",
-        "trade_no",
-        "merchant_no",
-        "remark",
-    ]
+    keep = ALIPAY_OUTPUT_COLUMNS
     for col in keep:
         if col not in df.columns:
             df[col] = ""

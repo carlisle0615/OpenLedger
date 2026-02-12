@@ -28,27 +28,26 @@ from typing import Any
 import pandas as pd
 from pandas.errors import EmptyDataError
 
+from openledger.stage_contracts import (
+    ART_ALIPAY_NORMALIZED,
+    ART_BANK_ENRICHED,
+    ART_BANK_UNMATCHED,
+    ART_CC_ENRICHED,
+    ART_CC_UNMATCHED,
+    ART_UNIFIED_TX,
+    ART_WECHAT_NORMALIZED,
+    required_columns,
+)
+
 from ._common import log, make_parser
 
-UNIFIED_COLUMNS = [
-    "trade_time",
-    "trade_date",
-    "post_date",
-    "account",
-    "currency",
-    "amount",
-    "amount_abs",
-    "flow",
-    "merchant",
-    "item",
-    "category",
-    "pay_method",
-    "primary_source",
-    "sources",
-    "match_status",
-    "match_group_id",
-    "remark",
-]
+CC_ENRICHED_COLUMNS = required_columns(ART_CC_ENRICHED)
+CC_UNMATCHED_COLUMNS = required_columns(ART_CC_UNMATCHED)
+BANK_ENRICHED_COLUMNS = required_columns(ART_BANK_ENRICHED)
+BANK_UNMATCHED_COLUMNS = required_columns(ART_BANK_UNMATCHED)
+WECHAT_NORMALIZED_COLUMNS = required_columns(ART_WECHAT_NORMALIZED)
+ALIPAY_NORMALIZED_COLUMNS = required_columns(ART_ALIPAY_NORMALIZED)
+UNIFIED_COLUMNS = required_columns(ART_UNIFIED_TX)
 
 
 @dataclass(frozen=True, slots=True)
@@ -794,28 +793,12 @@ def build_unified(
     out_dir: Path,
     period: Period | None = None,
 ) -> Path:
-    cc_required = ["section", "trans_date", "post_date", "description", "amount_rmb", "card_last4", "match_status"]
-    bank_required = ["account_last4", "trans_date", "currency", "amount", "summary", "counterparty", "match_status"]
-    wechat_required = ["pay_method", "amount", "direction", "trans_time", "trans_date", "trans_type", "counterparty", "item", "status"]
-    alipay_required = [
-        "pay_method",
-        "amount",
-        "direction",
-        "trans_time",
-        "trans_date",
-        "category",
-        "counterparty",
-        "counterparty_account",
-        "item",
-        "status",
-    ]
-
-    cc_enriched = _read_csv_or_empty(cc_enriched_path, cc_required)
-    cc_unmatched = _read_csv_or_empty(cc_unmatched_path, cc_required)
-    bank_enriched = _read_csv_or_empty(bank_enriched_path, bank_required)
-    bank_unmatched = _read_csv_or_empty(bank_unmatched_path, bank_required)
-    wechat_norm = _read_csv_or_empty(wechat_norm_path, wechat_required)
-    alipay_norm = _read_csv_or_empty(alipay_norm_path, alipay_required)
+    cc_enriched = _read_csv_or_empty(cc_enriched_path, CC_ENRICHED_COLUMNS)
+    cc_unmatched = _read_csv_or_empty(cc_unmatched_path, CC_UNMATCHED_COLUMNS)
+    bank_enriched = _read_csv_or_empty(bank_enriched_path, BANK_ENRICHED_COLUMNS)
+    bank_unmatched = _read_csv_or_empty(bank_unmatched_path, BANK_UNMATCHED_COLUMNS)
+    wechat_norm = _read_csv_or_empty(wechat_norm_path, WECHAT_NORMALIZED_COLUMNS)
+    alipay_norm = _read_csv_or_empty(alipay_norm_path, ALIPAY_NORMALIZED_COLUMNS)
 
     detail_lookup = _build_detail_lookup(wechat_norm, alipay_norm)
     detail_to_bill = _build_detail_to_bill_map(cc_enriched, bank_enriched)

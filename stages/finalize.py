@@ -19,7 +19,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from openledger.stage_contracts import ART_REVIEW, ART_UNIFIED_WITH_ID, required_columns
+
 from ._common import log, make_parser
+
+REVIEW_REQUIRED_COLUMNS = set(required_columns(ART_REVIEW))
+UNIFIED_WITH_ID_REQUIRED_COLUMNS = set(required_columns(ART_UNIFIED_WITH_ID))
 
 
 def default_classifier_config_path() -> Path:
@@ -62,16 +67,11 @@ def finalize(
     unified = pd.read_csv(unified_with_id_csv, dtype=str).fillna("")
     review = pd.read_csv(review_csv, dtype=str).fillna("")
 
-    required_cols = {
-        "txn_id",
-        "suggested_category_id",
-        "suggested_uncertain",
-        "suggested_confidence",
-        "suggested_note",
-        "final_category_id",
-        "final_note",
-    }
-    missing = sorted(required_cols - set(review.columns))
+    missing_unified_cols = sorted(UNIFIED_WITH_ID_REQUIRED_COLUMNS - set(unified.columns))
+    if missing_unified_cols:
+        raise SystemExit(f"unified.with_id.csv 缺少列: {missing_unified_cols}")
+
+    missing = sorted(REVIEW_REQUIRED_COLUMNS - set(review.columns))
     if missing:
         raise SystemExit(f"review.csv 缺少列: {missing}")
 

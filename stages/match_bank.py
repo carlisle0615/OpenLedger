@@ -26,32 +26,24 @@ from typing import Any, Literal
 import pandas as pd
 from rapidfuzz import fuzz
 
+from openledger.stage_contracts import (
+    ART_ALIPAY_NORMALIZED,
+    ART_BANK_ENRICHED,
+    ART_BANK_MATCH_DEBUG,
+    ART_BANK_UNMATCHED,
+    ART_TX_BANK,
+    ART_WECHAT_NORMALIZED,
+    assert_required_columns,
+    merge_with_contract_columns,
+    required_columns,
+    table_columns,
+)
+
 from ._common import log, make_parser
 
-MATCH_DEBUG_COLUMNS = [
-    "row_index",
-    "account_last4",
-    "trans_date",
-    "amount",
-    "summary",
-    "counterparty",
-    "date_window",
-    "candidate_count_exact",
-    "candidate_count_sum",
-    "candidate_count_fuzzy",
-    "best_date_diff_days",
-    "best_direction_penalty",
-    "best_text_similarity",
-    "best_amount_diff",
-    "match_method",
-    "match_status",
-    "match_confidence",
-    "chosen_count",
-    "chosen_channels",
-    "match_sources",
-    "chosen_trade_no",
-    "chosen_merchant_no",
-]
+BANK_INPUT_REQUIRED = set(required_columns(ART_TX_BANK))
+BANK_BASE_PREFERRED = required_columns(ART_TX_BANK)
+MATCH_DEBUG_COLUMNS = table_columns(ART_BANK_MATCH_DEBUG)
 
 MAX_SUM_PARTS = 4
 SUM_AMOUNT_TOL = Decimal("0.01")
@@ -110,6 +102,18 @@ def _direction_penalty(is_refund: bool, bank_amount: Decimal, detail_row: pd.Ser
 def _build_detail_df(wechat_path: Path, alipay_path: Path) -> pd.DataFrame:
     w = pd.read_csv(wechat_path, dtype=str)
     a = pd.read_csv(alipay_path, dtype=str)
+    assert_required_columns(
+        list(w.columns),
+        ART_WECHAT_NORMALIZED,
+        stage_id="match_bank",
+        file_path=str(wechat_path),
+    )
+    assert_required_columns(
+        list(a.columns),
+        ART_ALIPAY_NORMALIZED,
+        stage_id="match_bank",
+        file_path=str(alipay_path),
+    )
 
     def norm(df: pd.DataFrame, channel: str) -> pd.DataFrame:
         out = pd.DataFrame(index=df.index)
@@ -274,6 +278,12 @@ def match_bank_statements(
 
     for bank_csv in bank_csvs:
         df = pd.read_csv(bank_csv, dtype=str)
+        assert_required_columns(
+            list(df.columns),
+            ART_TX_BANK,
+            stage_id="match_bank",
+            file_path=str(bank_csv),
+        )
         raw_cols = list(df.columns)
         observed_raw_cols.update(raw_cols)
         df["trans_date_dt"] = df["trans_date"].map(lambda s: _to_date(s) or date.min)
@@ -550,41 +560,11 @@ def match_bank_statements(
     out_dir.mkdir(parents=True, exist_ok=True)
     enriched_path = out_dir / "bank.enriched.csv"
     unmatched_path = out_dir / "bank.unmatched.csv"
-    base_cols_preferred = [
-        "source",
-        "account_last4",
-        "trans_date",
-        "currency",
-        "amount",
-        "balance",
-        "summary",
-        "counterparty",
-    ]
-    extra_base_cols = sorted([c for c in observed_raw_cols if c not in base_cols_preferred])
-    base_cols = base_cols_preferred + extra_base_cols
+    extra_base_cols = sorted([c for c in observed_raw_cols if c not in BANK_BASE_PREFERRED])
+    base_cols = list(BANK_BASE_PREFERRED) + extra_base_cols
 
-    enriched_cols = base_cols + [
-        "match_status",
-        "match_method",
-        "match_sources",
-        "detail_channel",
-        "detail_trans_time",
-        "detail_trans_date",
-        "detail_direction",
-        "detail_counterparty",
-        "detail_item",
-        "detail_pay_method",
-        "detail_trade_no",
-        "detail_merchant_no",
-        "detail_status",
-        "detail_category_or_type",
-        "detail_remark",
-        "match_date_diff_days",
-        "match_direction_penalty",
-        "match_text_similarity",
-        "match_confidence",
-    ]
-    unmatched_cols = base_cols + ["match_status", "match_method", "match_confidence"]
+    enriched_cols = merge_with_contract_columns(base_cols, ART_BANK_ENRICHED)
+    unmatched_cols = merge_with_contract_columns(base_cols, ART_BANK_UNMATCHED)
 
     enriched_df = pd.DataFrame(enriched_rows, columns=enriched_cols)
     unmatched_df = pd.DataFrame(unmatched_rows, columns=unmatched_cols)
@@ -619,15 +599,6 @@ def main() -> None:
     if not bank_csvs:
         import csv
 
-        required_cols = {
-            "account_last4",
-            "trans_date",
-            "currency",
-            "amount",
-            "balance",
-            "summary",
-            "counterparty",
-        }
         candidates = sorted(Path("output").glob("*.transactions.csv"))
         for p in candidates:
             try:
@@ -636,7 +607,7 @@ def main() -> None:
                 cols = {str(x).strip() for x in header if str(x).strip()}
             except Exception:
                 continue
-            if required_cols.issubset(cols):
+            if BANK_INPUT_REQUIRED.issubset(cols):
                 bank_csvs.append(p)
         if not bank_csvs:
             bank_csvs = sorted(Path("output").glob("*交易流水*.transactions.csv"))

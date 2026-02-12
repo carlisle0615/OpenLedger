@@ -13,6 +13,20 @@ from typing import Any
 from .config import resolve_global_classifier_config
 from .logger import get_logger
 from .profiles import add_bill_from_run
+from .stage_contracts import (
+    ART_ALIPAY_NORMALIZED,
+    ART_BANK_ENRICHED,
+    ART_BANK_MATCH_DEBUG,
+    ART_BANK_UNMATCHED,
+    ART_CC_ENRICHED,
+    ART_CC_MATCH_DEBUG,
+    ART_CC_UNMATCHED,
+    ART_TX_BANK,
+    ART_TX_CREDIT_CARD,
+    ART_WECHAT_NORMALIZED,
+    required_columns,
+    table_columns,
+)
 from .state import (
     DEFAULT_STAGES,
     init_run_state,
@@ -143,8 +157,8 @@ def _find_extracted_csvs(out_dir: Path) -> dict[str, list[Path]]:
             row = next(reader, [])
         return {str(x).strip() for x in row if str(x).strip()}
 
-    cc_required = {"section", "trans_date", "post_date", "description", "amount_rmb", "card_last4"}
-    bank_required = {"account_last4", "trans_date", "currency", "amount", "balance", "summary", "counterparty"}
+    cc_required = set(required_columns(ART_TX_CREDIT_CARD))
+    bank_required = set(required_columns(ART_TX_BANK))
 
     cc_by_schema: list[Path] = []
     bank_by_schema: list[Path] = []
@@ -184,156 +198,20 @@ def _write_csv_header(path: Path, columns: list[str]) -> None:
 
 
 def _write_empty_credit_card_outputs(out_dir: Path) -> None:
-    base_cols = [
-        "source",
-        "section",
-        "trans_date",
-        "post_date",
-        "description",
-        "amount_rmb",
-        "card_last4",
-        "original_amount",
-        "original_region",
-    ]
-    matched_extra_cols = [
-        "match_status",
-        "match_method",
-        "match_sources",
-        "detail_channel",
-        "detail_trans_time",
-        "detail_trans_date",
-        "detail_direction",
-        "detail_counterparty",
-        "detail_item",
-        "detail_pay_method",
-        "detail_trade_no",
-        "detail_merchant_no",
-        "detail_status",
-        "detail_category_or_type",
-        "detail_remark",
-        "match_date_diff_days",
-        "match_direction_penalty",
-        "match_text_similarity",
-        "match_confidence",
-    ]
-    unmatched_extra_cols = ["match_status", "match_channels_tried", "match_method", "match_confidence"]
-    debug_cols = [
-        "row_index",
-        "section",
-        "trans_date",
-        "post_date",
-        "amount_rmb",
-        "card_last4",
-        "description",
-        "channels_tried",
-        "base_date",
-        "candidate_count_exact",
-        "candidate_count_sum",
-        "best_date_diff_days",
-        "best_direction_penalty",
-        "best_text_similarity",
-        "match_method",
-        "match_status",
-        "match_confidence",
-        "chosen_count",
-        "chosen_channels",
-    ]
-
-    _write_csv_header(out_dir / "credit_card.enriched.csv", base_cols + matched_extra_cols)
-    _write_csv_header(out_dir / "credit_card.unmatched.csv", base_cols + unmatched_extra_cols)
-    _write_csv_header(out_dir / "credit_card.match_debug.csv", debug_cols)
+    _write_csv_header(out_dir / "credit_card.enriched.csv", table_columns(ART_CC_ENRICHED))
+    _write_csv_header(out_dir / "credit_card.unmatched.csv", table_columns(ART_CC_UNMATCHED))
+    _write_csv_header(out_dir / "credit_card.match_debug.csv", table_columns(ART_CC_MATCH_DEBUG))
 
 
 def _write_empty_bank_outputs(out_dir: Path) -> None:
-    base_cols = [
-        "source",
-        "account_last4",
-        "trans_date",
-        "currency",
-        "amount",
-        "balance",
-        "summary",
-        "counterparty",
-    ]
-    extra_cols = [
-        "match_status",
-        "match_method",
-        "match_sources",
-        "detail_channel",
-        "detail_trans_time",
-        "detail_trans_date",
-        "detail_direction",
-        "detail_counterparty",
-        "detail_item",
-        "detail_pay_method",
-        "detail_trade_no",
-        "detail_merchant_no",
-        "detail_status",
-        "detail_category_or_type",
-        "detail_remark",
-        "match_date_diff_days",
-        "match_direction_penalty",
-        "match_text_similarity",
-        "match_confidence",
-    ]
-    debug_cols = [
-        "row_index",
-        "account_last4",
-        "trans_date",
-        "amount",
-        "summary",
-        "counterparty",
-        "candidate_count_exact",
-        "candidate_count_sum",
-        "best_date_diff_days",
-        "best_direction_penalty",
-        "best_text_similarity",
-        "match_method",
-        "match_status",
-        "match_confidence",
-        "chosen_count",
-        "chosen_channels",
-    ]
-
-    _write_csv_header(out_dir / "bank.enriched.csv", base_cols + extra_cols)
-    _write_csv_header(out_dir / "bank.unmatched.csv", base_cols + ["match_status", "match_method", "match_confidence"])
-    _write_csv_header(out_dir / "bank.match_debug.csv", debug_cols)
+    _write_csv_header(out_dir / "bank.enriched.csv", table_columns(ART_BANK_ENRICHED))
+    _write_csv_header(out_dir / "bank.unmatched.csv", table_columns(ART_BANK_UNMATCHED))
+    _write_csv_header(out_dir / "bank.match_debug.csv", table_columns(ART_BANK_MATCH_DEBUG))
 
 
 def _write_empty_export_outputs(out_dir: Path) -> None:
-    wechat_cols = [
-        "channel",
-        "trans_time",
-        "trans_date",
-        "trans_type",
-        "counterparty",
-        "item",
-        "direction",
-        "amount",
-        "pay_method",
-        "status",
-        "trade_no",
-        "merchant_no",
-        "remark",
-    ]
-    alipay_cols = [
-        "channel",
-        "trans_time",
-        "trans_date",
-        "category",
-        "counterparty",
-        "counterparty_account",
-        "item",
-        "direction",
-        "amount",
-        "pay_method",
-        "status",
-        "trade_no",
-        "merchant_no",
-        "remark",
-    ]
-    _write_csv_header(out_dir / "wechat.normalized.csv", wechat_cols)
-    _write_csv_header(out_dir / "alipay.normalized.csv", alipay_cols)
+    _write_csv_header(out_dir / "wechat.normalized.csv", table_columns(ART_WECHAT_NORMALIZED))
+    _write_csv_header(out_dir / "alipay.normalized.csv", table_columns(ART_ALIPAY_NORMALIZED))
 
 
 def _run_cmd(
