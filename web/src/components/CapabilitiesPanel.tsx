@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, CheckCircle2, AlertTriangle, XCircle, Info, FileText, ChevronDown, ChevronRight, AlertCircle, Loader2 } from "lucide-react";
+import { RefreshCw, CheckCircle2, AlertTriangle, XCircle, FileText, ChevronDown, ChevronRight, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCapabilities, SourceCoverage } from "@/hooks/useCapabilities";
 import { RunState, PdfParserHealthItem } from "@/types";
@@ -14,6 +14,7 @@ import { RunState, PdfParserHealthItem } from "@/types";
 interface CapabilitiesPanelProps {
     baseUrl: string;
     runState: RunState | null;
+    mode?: "embedded" | "standalone";
 }
 
 // 简单的 Skeleton 组件
@@ -21,7 +22,7 @@ function Skeleton({ className }: { className?: string }) {
     return <div className={cn("animate-pulse rounded bg-muted", className)} />;
 }
 
-export function CapabilitiesPanel({ baseUrl, runState }: CapabilitiesPanelProps) {
+export function CapabilitiesPanel({ baseUrl, runState, mode = "embedded" }: CapabilitiesPanelProps) {
     const {
         loading,
         error,
@@ -33,6 +34,7 @@ export function CapabilitiesPanel({ baseUrl, runState }: CapabilitiesPanelProps)
     } = useCapabilities(baseUrl, runState ? { inputs: runState.inputs } : null);
 
     const hasRun = Boolean(runState);
+    const isStandalone = mode === "standalone";
 
     // 渲染数据源矩阵行
     const renderSourceRow = (s: SourceCoverage) => {
@@ -161,7 +163,7 @@ export function CapabilitiesPanel({ baseUrl, runState }: CapabilitiesPanelProps)
     }
 
     return (
-        <Card className="flex flex-col min-h-0 bg-background/50 shadow-sm">
+        <Card className={cn("flex flex-col min-h-0 bg-background/50 shadow-sm", isStandalone && "h-full")}>
             <CardHeader className="py-3 flex flex-row items-center justify-between space-y-0">
                 <div>
                     <CardTitle className="text-base">能力支持 & 健康状态</CardTitle>
@@ -191,13 +193,13 @@ export function CapabilitiesPanel({ baseUrl, runState }: CapabilitiesPanelProps)
                         ) : null}
                     </h3>
                     <div className="border rounded-md overflow-hidden flex-1 relative bg-card">
-                        <ScrollArea className="h-[200px] w-full">
+                        <ScrollArea className={cn("w-full", isStandalone ? "h-[460px]" : "h-[200px]")}>
                             <Table>
                                 <TableHeader className="sticky top-0 bg-secondary/90 backdrop-blur z-10">
                                     <TableRow>
-                                        <TableHead className="w-[120px]">数据源</TableHead>
+                                        <TableHead className={cn("min-w-[120px]", isStandalone && "min-w-[180px]")}>数据源</TableHead>
                                         <TableHead className="w-[80px]">类型</TableHead>
-                                        <TableHead className="min-w-[150px]">文件名提示</TableHead>
+                                        <TableHead className={cn("min-w-[150px]", isStandalone && "min-w-[260px]")}>文件名提示</TableHead>
                                         <TableHead className="w-[80px]">阶段</TableHead>
                                         <TableHead className="w-[80px]">解析器</TableHead>
                                         <TableHead className="w-[80px]">等级</TableHead>
@@ -255,7 +257,7 @@ export function CapabilitiesPanel({ baseUrl, runState }: CapabilitiesPanelProps)
                         ) : null}
                     </h3>
                     <div className="border rounded-md bg-card">
-                        <ScrollArea className="h-[150px]">
+                        <ScrollArea className={cn(isStandalone ? "h-[260px]" : "h-[150px]")}>
                             <div className="w-full">
                                 {loading && !parserHealth ? (
                                     <div className="p-2 space-y-2">

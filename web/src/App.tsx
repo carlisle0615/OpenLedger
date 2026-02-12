@@ -20,7 +20,7 @@ import { CapabilitiesPanel } from "@/components/CapabilitiesPanel";
 
 
 export default function App() {
-  const [activeView, setActiveView] = React.useState<"workspace" | "profiles">("workspace");
+  const [activeView, setActiveView] = React.useState<"workspace" | "profiles" | "capabilities">("workspace");
   const appState = useAppState();
   const {
     baseUrl, runs, runId, runsMeta,
@@ -109,6 +109,14 @@ export default function App() {
                   runState={state}
                 />
               </div>
+            ) : activeView === "capabilities" ? (
+              <div className="h-full overflow-auto">
+                <CapabilitiesPanel
+                  baseUrl={baseUrl}
+                  runState={state || null}
+                  mode="standalone"
+                />
+              </div>
             ) : (
               <div className="flex flex-col min-h-0 h-full gap-4">
                 {runId && !state?.inputs?.length ? (
@@ -158,8 +166,6 @@ export default function App() {
                       baseUrl={baseUrl}
                       selectFile={selectFile}
                     />
-
-                    <CapabilitiesPanel baseUrl={baseUrl} runState={state || null} />
 
                     {showConfigPanel ? (
                       <ConfigPanel

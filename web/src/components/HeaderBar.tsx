@@ -25,8 +25,8 @@ interface HeaderBarProps {
     runName: string;
     refreshRuns: () => Promise<any>;
     onCreateRun: (name: string) => Promise<void>;
-    activeView: "workspace" | "profiles";
-    setActiveView: (v: "workspace" | "profiles") => void;
+    activeView: "workspace" | "profiles" | "capabilities";
+    setActiveView: (v: "workspace" | "profiles" | "capabilities") => void;
 }
 
 export function HeaderBar({
@@ -58,6 +58,14 @@ export function HeaderBar({
                             onClick={() => setActiveView("profiles")}
                         >
                             用户
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant={activeView === "capabilities" ? "default" : "ghost"}
+                            className="h-7 px-3 text-xs"
+                            onClick={() => setActiveView("capabilities")}
+                        >
+                            能力
                         </Button>
                     </div>
                     <span className="text-xs text-muted-foreground font-mono">{runId || "未选择任务"}</span>
