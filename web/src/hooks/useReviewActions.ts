@@ -4,6 +4,7 @@ import {
     api, parseBoolish, isPendingRow, escapeRegExp, suggestCategoryId,
     type RuleMatchMode, type RuleMatchField, type RuleAction,
 } from "@/utils/helpers";
+import { type ConfirmChoice } from "@/hooks/useConfirm";
 import {
     useFilteredReviewRows, useReviewPendingCount, useSelectedReviewFields,
     ReviewContext, type ReviewContextType,
@@ -15,6 +16,7 @@ export interface ReviewActionsDeps {
     runId: string;
     config: ClassifierConfig | null;
     configText: string;
+    reviewFeedback: { type: "success" | "info"; text: string; ts: number } | null;
     busy: boolean;
     error: string;
 
@@ -47,6 +49,14 @@ export interface ReviewActionsDeps {
     newCategoryId: string;
 
     confirm: (opts: { title: string; description: string; confirmText: string; cancelText: string; tone: "default" | "danger" }) => Promise<boolean>;
+    confirmChoice: (opts: {
+        title: string;
+        description: string;
+        confirmText: string;
+        cancelText: string;
+        extraText: string;
+        tone: "default" | "danger";
+    }) => Promise<ConfirmChoice>;
 
     // setters
     setReviewRows: (v: Record<string, string>[]) => void;
@@ -74,6 +84,7 @@ export interface ReviewActionsDeps {
     setRuleNote: (v: string) => void;
     setNewCategoryName: (v: string) => void;
     setNewCategoryId: (v: string) => void;
+    setReviewFeedback: (v: { type: "success" | "info"; text: string; ts: number } | null) => void;
     setConfig: (v: ClassifierConfig | null) => void;
     setConfigText: (v: string) => void;
     setBusy: (v: boolean) => void;
@@ -85,17 +96,18 @@ export interface ReviewActionsDeps {
 
 export function useReviewActions(deps: ReviewActionsDeps) {
     const {
-        baseUrl, runId, config, configText, busy, error,
+        baseUrl, runId, config, configText, reviewFeedback, busy, error,
         reviewRows, reviewEdits, reviewPendingOnly, reviewQuery, reviewOpen,
         reviewSelectedTxnId, reviewSelectedTxnIds,
         bulkTarget, bulkIncludeReviewed, bulkCategoryId, bulkIgnored, bulkNote, bulkContinuousMode,
         ruleField, ruleMode, ruleAction, rulePattern, ruleCategoryId,
         ruleOnlyPending, ruleOverwriteFinal, ruleSaveToConfig, ruleSaveToGlobal, ruleNote,
         newCategoryName, newCategoryId,
-        confirm, saveConfigObject,
+        confirm, confirmChoice, saveConfigObject,
         setReviewRows, setReviewEdits, setReviewSelectedTxnIds,
         setReviewOpen, setReviewSelectedTxnId,
         setRuleCategoryId, setNewCategoryName, setNewCategoryId,
+        setReviewFeedback,
         setConfig, setConfigText,
         setBusy, setError, setBulkIgnored, setBulkCategoryId,
     } = deps;
@@ -193,18 +205,22 @@ export function useReviewActions(deps: ReviewActionsDeps) {
     const requestCloseReview = useCallback(async () => {
         const hasEdits = Object.keys(reviewEdits).length > 0;
         if (hasEdits) {
-            const save = await confirm({
+            const choice = await confirmChoice({
                 title: "关闭前保存修改？",
-                description: "检测到未保存的复核修改，请选择保存或放弃。",
+                description: "检测到未保存的复核修改，请选择如何处理。",
                 confirmText: "保存并关闭",
-                cancelText: "放弃修改",
+                cancelText: "放弃并关闭",
+                extraText: "继续编辑",
                 tone: "danger",
             });
-            if (save) {
+            if (choice === "confirm") {
                 const ok = await saveReviewEdits();
                 if (!ok) return false;
-            } else {
+            } else if (choice === "cancel") {
                 setReviewEdits({});
+                setReviewFeedback({ type: "info", text: "已放弃未保存修改。", ts: Date.now() });
+            } else {
+                return false;
             }
         }
         if (window.location.hash === "#review") {
@@ -212,13 +228,14 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         }
         setReviewOpen(false);
         return true;
-    }, [confirm, reviewEdits, saveReviewEdits, setReviewEdits]);
+    }, [confirmChoice, reviewEdits, saveReviewEdits, setReviewEdits, setReviewFeedback]);
 
     const loadReview = useCallback(async () => {
         if (!runId) return;
         const path = "output/classify/review.csv";
         setBusy(true);
         setError("");
+        setReviewFeedback(null);
         try {
             const limit = 2000;
             let offset = 0;
@@ -236,12 +253,14 @@ export function useReviewActions(deps: ReviewActionsDeps) {
             setReviewRows(rows);
             setReviewEdits({});
             setReviewSelectedTxnIds({});
+            setReviewFeedback({ type: "success", text: `已加载 ${rows.length} 条复核记录。`, ts: Date.now() });
         } catch (e) {
             setError(String(e));
+            setReviewFeedback(null);
         } finally {
             setBusy(false);
         }
-    }, [baseUrl, runId, setBusy, setError, setReviewRows, setReviewEdits, setReviewSelectedTxnIds]);
+    }, [baseUrl, runId, setBusy, setError, setReviewRows, setReviewEdits, setReviewSelectedTxnIds, setReviewFeedback]);
 
     async function openReview() {
         setReviewOpen(true);
@@ -329,6 +348,11 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         }
 
         applyLocalEdits(txnIds, patch);
+        setReviewFeedback({
+            type: "info",
+            text: `已本地应用 ${txnIds.length} 条，记得点击“保存”提交。`,
+            ts: Date.now(),
+        });
 
         if (bulkContinuousMode && txnIds.length === 1) {
             jumpToNextFiltered(txnIds[0]);
@@ -341,6 +365,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         if (updates.length === 0) return true;
         setBusy(true);
         setError("");
+        setReviewFeedback(null);
         try {
             await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/review/updates`, {
                 method: "POST",
@@ -348,9 +373,11 @@ export function useReviewActions(deps: ReviewActionsDeps) {
                 body: JSON.stringify({ updates }),
             });
             await loadReview();
+            setReviewFeedback({ type: "success", text: `已保存 ${updates.length} 条修改。`, ts: Date.now() });
             return true;
         } catch (e) {
             setError(String(e));
+            setReviewFeedback(null);
             return false;
         } finally {
             setBusy(false);
@@ -394,6 +421,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         setRuleCategoryId(id);
         setNewCategoryName("");
         setNewCategoryId("");
+        setReviewFeedback({ type: "success", text: `已新增分类 ${name}。`, ts: Date.now() });
     }
 
     async function applyQuickRule() {
@@ -424,6 +452,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
 
         setBusy(true);
         setError("");
+        setReviewFeedback(null);
         try {
             const fields = [ruleField];
             const pattern = ruleMode === "contains" ? escapeRegExp(patternRaw) : patternRaw;
@@ -545,8 +574,10 @@ export function useReviewActions(deps: ReviewActionsDeps) {
                 body: JSON.stringify({ updates }),
             });
             await loadReview();
+            setReviewFeedback({ type: "success", text: `规则已应用到 ${matches.length} 条记录。`, ts: Date.now() });
         } catch (e) {
             setError(String(e));
+            setReviewFeedback(null);
         } finally {
             setBusy(false);
         }
@@ -673,6 +704,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         ruleField, ruleMode, ruleAction, rulePattern, ruleCategoryId, ruleOnlyPending,
         ruleOverwriteFinal, ruleSaveToConfig, ruleSaveToGlobal, ruleNote,
         newCategoryName, newCategoryId,
+        reviewFeedback,
         config, configText, busy, error, runId,
 
         // Actions
@@ -701,6 +733,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         setRuleNote: deps.setRuleNote,
         setNewCategoryName: deps.setNewCategoryName,
         setNewCategoryId: deps.setNewCategoryId,
+        setReviewFeedback: deps.setReviewFeedback,
         setError: deps.setError,
         loadReview, saveReviewEdits, applyBulkLocal, applyQuickRule, addCategory, requestCloseReview,
 

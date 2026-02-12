@@ -11,9 +11,11 @@ export interface ConfirmDialogProps {
   description?: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
+  extraText?: string;
   tone?: ConfirmTone;
   onConfirm: () => void;
   onCancel: () => void;
+  onExtra?: () => void;
 }
 
 export function ConfirmDialog({
@@ -22,9 +24,11 @@ export function ConfirmDialog({
   description,
   confirmText = "确认",
   cancelText = "取消",
+  extraText,
   tone = "default",
   onConfirm,
   onCancel,
+  onExtra,
 }: ConfirmDialogProps) {
   if (!open) return null;
 
@@ -42,6 +46,11 @@ export function ConfirmDialog({
             <Button variant="outline" onClick={onCancel}>
               {cancelText}
             </Button>
+            {extraText && onExtra ? (
+              <Button variant="secondary" onClick={onExtra}>
+                {extraText}
+              </Button>
+            ) : null}
             <Button variant={tone === "danger" ? "destructive" : "default"} onClick={onConfirm}>
               {confirmText}
             </Button>

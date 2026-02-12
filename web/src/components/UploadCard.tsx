@@ -11,10 +11,11 @@ interface UploadCardProps {
 }
 
 export function UploadCard({ state, runId, busy, onUpload }: UploadCardProps) {
+    const uploadedCount = state?.inputs?.length ?? 0;
     return (
         <Card>
             <CardHeader className="py-3">
-                <CardTitle className="text-base">上传</CardTitle>
+                <CardTitle className="text-base">上传/追加上传</CardTitle>
             </CardHeader>
             <CardContent className="py-3">
                 <div className="flex items-center gap-2">
@@ -26,11 +27,19 @@ export function UploadCard({ state, runId, busy, onUpload }: UploadCardProps) {
                         className="flex-1 cursor-pointer text-xs h-8"
                     />
                 </div>
-                {state?.inputs?.length ? (
+                {!runId ? (
                     <div className="mt-2 text-xs text-muted-foreground">
-                        已上传 {state.inputs.length} 个文件
+                        请先在顶部选择或新建任务，再上传文件。
                     </div>
-                ) : null}
+                ) : uploadedCount > 0 ? (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                        已上传 {uploadedCount} 个文件，可继续追加。
+                    </div>
+                ) : (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                        支持多选上传 PDF/CSV/XLSX。
+                    </div>
+                )}
             </CardContent>
         </Card>
     );

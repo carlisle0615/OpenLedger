@@ -10,6 +10,12 @@ import {
 import { type RuleMatchMode, type RuleMatchField, type RuleAction, type RunMeta } from "@/utils/helpers";
 import { useConfirm } from "@/hooks/useConfirm";
 
+export type ReviewFeedback = {
+    type: "success" | "info";
+    text: string;
+    ts: number;
+};
+
 export function useAppState() {
     const [baseUrl, setBaseUrl] = useState(
         () => localStorage.getItem("openledger_baseUrl") || "http://127.0.0.1:8000",
@@ -58,11 +64,12 @@ export function useAppState() {
     const [ruleNote, setRuleNote] = useState("");
     const [newCategoryName, setNewCategoryName] = useState("");
     const [newCategoryId, setNewCategoryId] = useState("");
+    const [reviewFeedback, setReviewFeedback] = useState<ReviewFeedback | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string>("");
     const [selectedStageId, setSelectedStageId] = useState<string>("");
     const lastOptionEdit = useRef<number>(0);
-    const { confirm, dialog } = useConfirm();
+    const { confirm, confirmChoice, dialog } = useConfirm();
 
     // localStorage 同步
     useEffect(() => {
@@ -112,10 +119,11 @@ export function useAppState() {
         ruleNote, setRuleNote,
         // 新分类
         newCategoryName, setNewCategoryName, newCategoryId, setNewCategoryId,
+        reviewFeedback, setReviewFeedback,
         // UI
         busy, setBusy, error, setError,
         selectedStageId, setSelectedStageId,
         lastOptionEdit,
-        confirm, dialog,
+        confirm, confirmChoice, dialog,
     };
 }

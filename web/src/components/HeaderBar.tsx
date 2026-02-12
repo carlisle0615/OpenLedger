@@ -6,8 +6,15 @@ import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { AlertCircle, Play, RefreshCw } from "lucide-react";
+import { AlertCircle, Play, RefreshCw, Settings, Plus, CheckCircle2, CloudLightning } from "lucide-react";
 import { type RunMeta } from "@/utils/helpers";
+import { SettingsDialog } from "@/components/SettingsDialog";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import { Label } from "@/components/ui/label";
 
 interface HeaderBarProps {
     baseUrl: string;
@@ -37,144 +44,157 @@ export function HeaderBar({
     refreshRuns, onCreateRun,
     activeView, setActiveView,
 }: HeaderBarProps) {
+    const [settingsOpen, setSettingsOpen] = React.useState(false);
+    const [createOpen, setCreateOpen] = React.useState(false);
+
+    const handleCreate = async () => {
+        if (!newRunName.trim()) return;
+        await onCreateRun(newRunName);
+        setCreateOpen(false);
+        setNewRunName("");
+    };
+
     return (
         <>
-            <div className="flex items-center justify-between py-2">
-                <h1 className="text-xl font-semibold tracking-tight">OpenLedger</h1>
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1 rounded-md border bg-card p-1">
+            <div className="flex items-center justify-between h-14 px-4 border-b bg-background sticky top-0 z-50">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <div className="h-6 w-6 rounded bg-primary text-primary-foreground flex items-center justify-center font-bold">
+                            LE
+                        </div>
+                        <h1 className="text-lg font-semibold tracking-tight hidden md:block">OpenLedger</h1>
+                    </div>
+
+                    <nav className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 rounded-md bg-muted/50 p-1">
+                            <Button
+                                size="sm"
+                                variant={activeView === "workspace" ? "secondary" : "ghost"}
+                                className="h-7 px-3 text-xs"
+                                onClick={() => setActiveView("workspace")}
+                            >
+                                工作台
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant={activeView === "profiles" ? "secondary" : "ghost"}
+                                className="h-7 px-3 text-xs"
+                                onClick={() => setActiveView("profiles")}
+                            >
+                                用户
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant={activeView === "capabilities" ? "secondary" : "ghost"}
+                                className="h-7 px-3 text-xs"
+                                onClick={() => setActiveView("capabilities")}
+                            >
+                                能力
+                            </Button>
+                        </div>
+                    </nav>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    {/* Run Selector */}
+                    <div className="flex items-center gap-2">
+                        <Select value={runId} onValueChange={setRunId}>
+                            <SelectTrigger className="w-[180px] h-8 text-xs bg-muted/30 border-dashed">
+                                <SelectValue placeholder="选择任务" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {runs.map((r) => (
+                                    <SelectItem key={r} value={r} className="text-xs">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-mono text-xs">{r.slice(0, 8)}...</span>
+                                            {(() => {
+                                                const name = String(runsMeta.find((m) => m.id === r)?.name ?? "").trim();
+                                                return name ? <span className="text-muted-foreground truncate max-w-[120px]">{name}</span> : null;
+                                            })()}
+                                        </div>
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+
+                        <Popover open={createOpen} onOpenChange={setCreateOpen}>
+                            <PopoverTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8" title="新建任务">
+                                    <Plus className="h-4 w-4" />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-80" align="end">
+                                <div className="grid gap-4">
+                                    <div className="space-y-2">
+                                        <h4 className="font-medium leading-none">新建任务</h4>
+                                        <p className="text-sm text-muted-foreground">
+                                            输任务名称开始新的流程。
+                                        </p>
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="new-run-name">名称</Label>
+                                        <Input
+                                            id="new-run-name"
+                                            value={newRunName}
+                                            onChange={(e) => setNewRunName(e.target.value)}
+                                            className="h-8"
+                                        />
+                                    </div>
+                                    <div className="flex justify-end">
+                                        <Button size="sm" onClick={handleCreate} disabled={busy || !newRunName.trim()}>
+                                            创建并开始
+                                        </Button>
+                                    </div>
+                                </div>
+                            </PopoverContent>
+                        </Popover>
+                    </div>
+
+                    <Separator orientation="vertical" className="h-6 mx-2" />
+
+                    {/* Status & Actions */}
+                    <div className="flex items-center gap-1">
+                        {runStatus && (
+                            <Badge variant={runStatus.variant as any} className="gap-1 px-2 h-7 font-normal">
+                                {runStatus.icon && <runStatus.icon className="h-3.5 w-3.5" />}
+                                <span className="hidden sm:inline-block">{runStatus.text}</span>
+                            </Badge>
+                        )}
+
                         <Button
-                            size="sm"
-                            variant={activeView === "workspace" ? "default" : "ghost"}
-                            className="h-7 px-3 text-xs"
-                            onClick={() => setActiveView("workspace")}
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground"
+                            onClick={() => setSettingsOpen(true)}
+                            title="设置"
                         >
-                            工作台
-                        </Button>
-                        <Button
-                            size="sm"
-                            variant={activeView === "profiles" ? "default" : "ghost"}
-                            className="h-7 px-3 text-xs"
-                            onClick={() => setActiveView("profiles")}
-                        >
-                            用户
-                        </Button>
-                        <Button
-                            size="sm"
-                            variant={activeView === "capabilities" ? "default" : "ghost"}
-                            className="h-7 px-3 text-xs"
-                            onClick={() => setActiveView("capabilities")}
-                        >
-                            能力
+                            <Settings className="h-4 w-4" />
+                            {backendStatus === "error" && (
+                                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-destructive" />
+                            )}
                         </Button>
                     </div>
-                    <span className="text-xs text-muted-foreground font-mono">{runId || "未选择任务"}</span>
-                    {runName ? (
-                        <span className="text-xs text-muted-foreground truncate max-w-[260px]" title={runName}>
-                            {runName}
-                        </span>
-                    ) : null}
-                    <Badge variant="outline" className="font-mono">v0.2</Badge>
+
+
+                    {!runId && (
+                        <div className="hidden lg:flex items-center gap-2 text-xs text-muted-foreground bg-muted/30 px-2 py-1 rounded border border-dashed ml-2">
+                            <AlertCircle className="h-3 w-3" />
+                            <span>请先配置后端并选择任务</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* Top Control Bar */}
-            <div className="flex flex-wrap items-center gap-4 px-4 py-2 border rounded-md bg-card">
-                <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">后端</span>
-                    <Input
-                        value={baseUrl}
-                        onChange={(e) => setBaseUrl(e.target.value)}
-                        className="w-[200px] h-8 font-mono text-xs"
-                    />
-                </div>
-                <div className="flex items-center gap-2">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8"
-                        onClick={() => refreshRuns().catch(() => { })}
-                        disabled={busy || backendStatus === "checking" || !baseUrl.trim()}
-                    >
-                        <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                        测试连接
-                    </Button>
-                    <Badge
-                        variant={
-                            backendStatus === "error"
-                                ? "destructive"
-                                : backendStatus === "ok"
-                                    ? "default"
-                                    : backendStatus === "checking"
-                                        ? "secondary"
-                                        : "outline"
-                        }
-                        className="h-7"
-                        title={backendStatus === "error" ? backendError : undefined}
-                    >
-                        {backendStatus === "checking"
-                            ? "连接中…"
-                            : backendStatus === "ok"
-                                ? "已连接"
-                                : backendStatus === "error"
-                                    ? "连接失败"
-                                    : "未检测"}
-                    </Badge>
-                </div>
-                <Separator orientation="vertical" className="h-6" />
-                <div className="flex items-center gap-2 flex-1">
-                    <Select value={runId} onValueChange={setRunId}>
-                        <SelectTrigger className="w-[240px] h-8 font-mono text-xs">
-                            <SelectValue placeholder="选择任务" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {runs.map((r) => (
-                                <SelectItem key={r} value={r} className="text-xs">
-                                    <span className="font-mono">{r}</span>
-                                    {(() => {
-                                        const name = String(runsMeta.find((m) => m.id === r)?.name ?? "").trim();
-                                        return name ? <span className="ml-2 text-muted-foreground">{name}</span> : null;
-                                    })()}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => refreshRuns().catch(() => { })}
-                        disabled={busy}
-                        title="刷新任务列表"
-                    >
-                        <RefreshCw className="h-3.5 w-3.5" />
-                    </Button>
-                    <Input
-                        value={newRunName}
-                        onChange={(e) => setNewRunName(e.target.value)}
-                        placeholder="新任务名称（可选）"
-                        className="w-[220px] h-8 text-xs"
-                        disabled={busy}
-                    />
-                    <Button size="sm" className="h-8" onClick={() => onCreateRun(newRunName)} disabled={busy}>
-                        <Play className="mr-2 h-3.5 w-3.5" /> 新建任务
-                    </Button>
-                    {!runId ? (
-                        <span className="relative inline-flex items-center text-[hsl(var(--warning))] animate-pulse group">
-                            <AlertCircle className="h-4 w-4" aria-label="新手提示" />
-                            <span className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-56 -translate-x-1/2 rounded-md border bg-popover px-2 py-1 text-[11px] text-popover-foreground shadow-md opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-                                新手提示：先测试连接，再新建任务，上传文件后运行流程。
-                            </span>
-                        </span>
-                    ) : null}
-                </div>
-                {runStatus && (
-                    <Badge variant={runStatus.variant as any} className="gap-1 pl-2 h-7 px-2">
-                        {runStatus.icon && <runStatus.icon className="h-3.5 w-3.5" />}
-                        {runStatus.text}
-                    </Badge>
-                )}
-            </div>
+            <SettingsDialog
+                open={settingsOpen}
+                onOpenChange={setSettingsOpen}
+                baseUrl={baseUrl}
+                setBaseUrl={setBaseUrl}
+                backendStatus={backendStatus}
+                backendError={backendError}
+                refreshRuns={refreshRuns}
+                busy={busy}
+            />
         </>
     );
 }

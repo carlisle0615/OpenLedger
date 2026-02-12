@@ -35,6 +35,7 @@ export interface ReviewState {
     ruleNote: string;
     newCategoryName: string;
     newCategoryId: string;
+    reviewFeedback: { type: "success" | "info"; text: string; ts: number } | null;
 
     // 配置
     config: ClassifierConfig | null;
@@ -74,6 +75,7 @@ export interface ReviewActions {
     setRuleNote: (v: string) => void;
     setNewCategoryName: (v: string) => void;
     setNewCategoryId: (v: string) => void;
+    setReviewFeedback: (v: { type: "success" | "info"; text: string; ts: number } | null) => void;
 
     setError: (v: string) => void;
 

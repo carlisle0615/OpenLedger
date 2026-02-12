@@ -17,9 +17,16 @@ interface ProfilesPageProps {
     busy: boolean;
     saveOptions: (updates: Partial<{ profile_id: string }>) => Promise<void> | void;
     runState: RunState | null;
+    confirmAction: (opts: {
+        title: string;
+        description: string;
+        confirmText: string;
+        cancelText: string;
+        tone: "default" | "danger";
+    }) => Promise<boolean>;
 }
 
-export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptions, runState }: ProfilesPageProps) {
+export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptions, runState, confirmAction }: ProfilesPageProps) {
     const [profiles, setProfiles] = useState<ProfileListItem[]>([]);
     const [selectedId, setSelectedId] = useState<string>("");
     const [selected, setSelected] = useState<Profile | null>(null);
@@ -190,7 +197,13 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
 
     async function deletePeriod(periodKey: string) {
         if (!selected?.id || !periodKey) return;
-        const ok = window.confirm(`确认删除账期 ${periodKey}？该账期下的所有记录将被移除。`);
+        const ok = await confirmAction({
+            title: "确认删除账期？",
+            description: `将删除账期 ${periodKey} 下的所有归档记录。`,
+            confirmText: "确认删除",
+            cancelText: "取消",
+            tone: "danger",
+        });
         if (!ok) return;
         setLoadingProfile(true);
         setError("");
@@ -211,7 +224,13 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
 
     async function reimportPeriod(periodKey: string) {
         if (!selected?.id || !periodKey || !runId) return;
-        const ok = window.confirm(`确认删除并重导账期 ${periodKey}？将使用当前任务 ${runId} 重新归档。`);
+        const ok = await confirmAction({
+            title: "确认重导账期？",
+            description: `将删除账期 ${periodKey} 的现有归档，并使用当前任务 ${runId} 重新归档。`,
+            confirmText: "确认重导",
+            cancelText: "取消",
+            tone: "danger",
+        });
         if (!ok) return;
         setLoadingProfile(true);
         setError("");

@@ -6,36 +6,66 @@ export type ConfirmOptions = Pick<
   "title" | "description" | "confirmText" | "cancelText" | "tone"
 >;
 
+export type ConfirmChoice = "confirm" | "cancel" | "extra";
+export type ConfirmChoiceOptions = ConfirmOptions & { extraText: string };
+
+type ConfirmDialogState =
+  | { mode: "boolean"; options: ConfirmOptions }
+  | { mode: "choice"; options: ConfirmChoiceOptions };
+
 export function useConfirm() {
-  const [options, setOptions] = useState<ConfirmOptions | null>(null);
-  const resolverRef = useRef<((value: boolean) => void) | null>(null);
+  const [dialogState, setDialogState] = useState<ConfirmDialogState | null>(null);
+  const boolResolverRef = useRef<((value: boolean) => void) | null>(null);
+  const choiceResolverRef = useRef<((value: ConfirmChoice) => void) | null>(null);
 
   const confirm = useCallback((opts: ConfirmOptions) => {
-    setOptions(opts);
+    setDialogState({ mode: "boolean", options: opts });
     return new Promise<boolean>((resolve) => {
-      resolverRef.current = resolve;
+      boolResolverRef.current = resolve;
+      choiceResolverRef.current = null;
     });
   }, []);
 
-  const handleClose = useCallback((result: boolean) => {
-    setOptions(null);
-    const resolve = resolverRef.current;
-    resolverRef.current = null;
-    if (resolve) resolve(result);
+  const confirmChoice = useCallback((opts: ConfirmChoiceOptions) => {
+    setDialogState({ mode: "choice", options: opts });
+    return new Promise<ConfirmChoice>((resolve) => {
+      choiceResolverRef.current = resolve;
+      boolResolverRef.current = null;
+    });
   }, []);
 
-  const dialog = options ? (
+  const handleClose = useCallback((result: ConfirmChoice) => {
+    const mode = dialogState?.mode;
+    setDialogState(null);
+
+    if (mode === "choice") {
+      const resolve = choiceResolverRef.current;
+      choiceResolverRef.current = null;
+      boolResolverRef.current = null;
+      if (resolve) resolve(result);
+      return;
+    }
+
+    const resolve = boolResolverRef.current;
+    boolResolverRef.current = null;
+    choiceResolverRef.current = null;
+    if (resolve) resolve(result === "confirm");
+  }, [dialogState?.mode]);
+
+  const dialog = dialogState ? (
     <ConfirmDialog
-      open={Boolean(options)}
-      title={options.title}
-      description={options.description}
-      confirmText={options.confirmText}
-      cancelText={options.cancelText}
-      tone={options.tone}
-      onConfirm={() => handleClose(true)}
-      onCancel={() => handleClose(false)}
+      open={Boolean(dialogState)}
+      title={dialogState.options.title}
+      description={dialogState.options.description}
+      confirmText={dialogState.options.confirmText}
+      cancelText={dialogState.options.cancelText}
+      tone={dialogState.options.tone}
+      extraText={dialogState.mode === "choice" ? dialogState.options.extraText : undefined}
+      onConfirm={() => handleClose("confirm")}
+      onCancel={() => handleClose("cancel")}
+      onExtra={dialogState.mode === "choice" ? () => handleClose("extra") : undefined}
     />
   ) : null;
 
-  return { confirm, dialog };
+  return { confirm, confirmChoice, dialog };
 }

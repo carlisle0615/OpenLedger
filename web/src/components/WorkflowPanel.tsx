@@ -26,6 +26,26 @@ export function WorkflowPanel({
   startWorkflow, resetClassify, cancelRun, baseUrl, selectFile, className
 }: WorkflowPanelProps) {
   const currentStage = state?.stages?.find(s => s.id === selectedStageId);
+  const hasInputs = (state?.inputs?.length ?? 0) > 0;
+  const runInProgress = state?.status === "running";
+  const runDisabledReason = !runId
+    ? "请先选择任务"
+    : busy
+      ? "当前有操作正在执行"
+      : runInProgress
+        ? "流程运行中，请先停止或等待完成"
+        : !hasInputs
+          ? "请先上传至少一个文件"
+          : "";
+  const canStartRun = !runDisabledReason;
+  const canCancel = Boolean(runId) && !busy && runInProgress;
+  const cancelDisabledReason = !runId
+    ? "请先选择任务"
+    : busy
+      ? "当前有操作正在执行"
+      : !runInProgress
+        ? "当前没有运行中的任务"
+        : "";
 
   const actionButtons = (
     <div className="ml-auto flex items-center gap-1.5 overflow-x-auto">
@@ -34,7 +54,8 @@ export function WorkflowPanel({
         size="sm"
         className="h-7 px-2 text-xs"
         onClick={() => startWorkflow(undefined)}
-        disabled={!runId || busy}
+        disabled={!canStartRun}
+        title={canStartRun ? "按当前设置执行完整流程" : runDisabledReason}
       >
         <Play className="mr-1.5 h-3 w-3" /> 运行全部
       </Button>
@@ -44,6 +65,7 @@ export function WorkflowPanel({
         className="h-7 px-2 text-xs"
         onClick={() => void resetClassify()}
         disabled={!runId || busy}
+        title={!runId ? "请先选择任务" : busy ? "当前有操作正在执行" : "清空分类产物后重跑"}
       >
         <RotateCcw className="mr-1.5 h-3 w-3" /> 重置分类产物
       </Button>
@@ -52,7 +74,8 @@ export function WorkflowPanel({
         size="sm"
         className="h-7 px-2 text-xs"
         onClick={() => cancelRun()}
-        disabled={!runId || busy}
+        disabled={!canCancel}
+        title={canCancel ? "停止当前任务" : cancelDisabledReason}
       >
         <Ban className="mr-1.5 h-3 w-3" /> 停止
       </Button>
@@ -74,6 +97,8 @@ export function WorkflowPanel({
             baseUrl={baseUrl}
             onRun={(id) => startWorkflow([id])}
             onSelectFile={selectFile}
+            runDisabled={!canStartRun}
+            runDisabledReason={runDisabledReason}
           />
         ) : (
           <div className="flex flex-col items-center justify-center p-12 text-muted-foreground border-dashed border-2 rounded-md bg-muted/5">

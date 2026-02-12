@@ -17,6 +17,8 @@ interface StageCardProps {
     isActive?: boolean;
     onRun?: (stageId: string) => void;
     onSelectFile?: (file: FileItem) => void;
+    runDisabled?: boolean;
+    runDisabledReason?: string;
 }
 
 type FileDisplay = {
@@ -97,7 +99,7 @@ function renderFileRow(f: FileItem, onSelect?: (file: FileItem) => void) {
 
 
 
-export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageCardProps) {
+export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile, runDisabled = false, runDisabledReason = "" }: StageCardProps) {
     const [io, setIo] = useState<StageIO | null>(null);
     const [logText, setLogText] = useState<string>("");
     const [isLogOpen, setIsLogOpen] = useState(stage.status === "running" || stage.status === "failed");
@@ -188,7 +190,20 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile }: StageC
                     </div>
                     <div className="flex items-center gap-2">
                         <Badge variant={status.variant} className="mr-2 h-5 px-1.5 text-[10px]">{status.text}</Badge>
-                        <Button size="sm" variant={stage.status === 'running' ? "secondary" : "outline"} onClick={() => onRun?.(stage.id)} disabled={stage.status === 'running'} className="h-7 text-xs px-2">
+                        <Button
+                            size="sm"
+                            variant={stage.status === 'running' ? "secondary" : "outline"}
+                            onClick={() => onRun?.(stage.id)}
+                            disabled={stage.status === 'running' || runDisabled}
+                            className="h-7 text-xs px-2"
+                            title={
+                                stage.status === "running"
+                                    ? "该阶段正在运行"
+                                    : runDisabled
+                                        ? runDisabledReason
+                                        : "运行该阶段"
+                            }
+                        >
                             <Play className="h-3 w-3 mr-1" />
                             运行
                         </Button>

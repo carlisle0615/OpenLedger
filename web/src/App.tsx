@@ -1,5 +1,4 @@
 import React, { useMemo } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCircle } from "lucide-react";
 
 import { useAppState } from "@/hooks/useAppState";
@@ -74,128 +73,123 @@ export default function App() {
     || finalizeStage?.status === "needs_review"
   );
   const showConfigPanel = Boolean(runId);
-  const showUploadCard = Boolean(runId) && !(state?.inputs?.length ?? 0);
+  const showUploadCard = true;
   const showSettingsCard = Boolean(state?.stages?.length);
 
   return (
     <>
-      <div className="h-screen overflow-hidden bg-background text-foreground p-4 font-sans antialiased">
-        <div className="w-full px-4 h-full flex flex-col gap-4">
-          <HeaderBar
-            baseUrl={baseUrl} setBaseUrl={appState.setBaseUrl}
-            backendStatus={backendStatus} backendError={backendError}
-            runs={runs} runId={runId} setRunId={appState.setRunId}
-            runsMeta={runsMeta} newRunName={newRunName} setNewRunName={setNewRunName}
-            busy={busy} runStatus={runStatus} runName={runName}
-            refreshRuns={refreshRuns} onCreateRun={onCreateRun}
-            activeView={activeView} setActiveView={setActiveView}
-          />
+      <div className="h-screen overflow-hidden bg-background text-foreground font-sans antialiased flex flex-col">
+        <HeaderBar
+          baseUrl={baseUrl} setBaseUrl={appState.setBaseUrl}
+          backendStatus={backendStatus} backendError={backendError}
+          runs={runs} runId={runId} setRunId={appState.setRunId}
+          runsMeta={runsMeta} newRunName={newRunName} setNewRunName={setNewRunName}
+          busy={busy} runStatus={runStatus} runName={runName}
+          refreshRuns={refreshRuns} onCreateRun={onCreateRun}
+          activeView={activeView} setActiveView={setActiveView}
+        />
 
-          {error && (
-            <div className="text-sm text-destructive flex items-center gap-2 p-2 border border-destructive/20 bg-destructive/10 rounded-md">
-              <AlertCircle className="h-4 w-4" /> {error}
+        {error && (
+          <div className="bg-destructive/10 border-b border-destructive/20 p-2 text-sm text-destructive flex items-center justify-center gap-2">
+            <AlertCircle className="h-4 w-4" /> {error}
+          </div>
+        )}
+
+        <div className="flex-1 min-h-0 overflow-hidden relative">
+          {activeView === "profiles" ? (
+            <div className="h-full overflow-auto p-4">
+              <ProfilesPage
+                baseUrl={baseUrl}
+                runId={runId}
+                currentProfileId={state?.options?.profile_id}
+                busy={busy}
+                saveOptions={saveOptions}
+                runState={state}
+                confirmAction={appState.confirm}
+              />
             </div>
-          )}
-
-          <div className="flex-1 min-h-0 overflow-hidden">
-            {activeView === "profiles" ? (
-              <div className="h-full overflow-auto">
-                <ProfilesPage
-                  baseUrl={baseUrl}
-                  runId={runId}
-                  currentProfileId={state?.options?.profile_id}
-                  busy={busy}
-                  saveOptions={saveOptions}
-                  runState={state}
-                />
-              </div>
-            ) : activeView === "capabilities" ? (
-              <div className="h-full overflow-auto">
-                <CapabilitiesPanel
-                  baseUrl={baseUrl}
-                  runState={state || null}
-                  mode="standalone"
-                />
-              </div>
-            ) : (
-              <div className="flex flex-col min-h-0 h-full gap-4">
-                {runId && !state?.inputs?.length ? (
-                  <Card>
-                    <CardHeader className="py-3">
-                      <CardTitle className="text-base">下一步</CardTitle>
-                    </CardHeader>
-                    <CardContent className="py-3 text-sm text-muted-foreground">
-                      请上传 PDF/CSV/XLSX 文件以开始处理。
-                    </CardContent>
-                  </Card>
-                ) : null}
-
-                {state?.stages?.length ? (
+          ) : activeView === "capabilities" ? (
+            <div className="h-full overflow-auto p-4">
+              <CapabilitiesPanel
+                baseUrl={baseUrl}
+                runState={state || null}
+                mode="standalone"
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col h-full bg-muted/10">
+              {state?.stages?.length ? (
+                <div className="bg-background border-b px-4 py-2 flex-shrink-0">
                   <WorkflowTimeline
                     state={state}
                     selectedStageId={selectedStageId}
                     setSelectedStageId={setSelectedStageId}
-                    className="mb-2"
                   />
-                ) : null}
+                </div>
+              ) : null}
 
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
-                  <div className="lg:col-span-4 flex flex-col gap-4 min-h-0 overflow-auto pr-1">
-                    {showReviewPanel ? (
-                      <ReviewPanel
-                        statusNeedsReview={state?.status === "needs_review"}
-                        reviewPendingCount={reviewPendingCount}
-                        reviewEditsCount={Object.keys(reviewEdits).length}
-                        reviewRowsCount={reviewRows.length}
+              <div className="flex-1 overflow-hidden p-4">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full min-h-0">
+                  {/* Left Panel: Workflow & Config */}
+                  <div className="lg:col-span-4 flex flex-col gap-4 h-full min-h-0 overflow-hidden">
+                    <div className="flex-1 overflow-auto pr-1 space-y-4">
+                      {showReviewPanel ? (
+                        <ReviewPanel
+                          statusNeedsReview={state?.status === "needs_review"}
+                          reviewPendingCount={reviewPendingCount}
+                          reviewEditsCount={Object.keys(reviewEdits).length}
+                          reviewRowsCount={reviewRows.length}
+                          runId={runId}
+                          busy={busy}
+                          loadReview={loadReview}
+                          openReview={openReview}
+                        />
+                      ) : null}
+
+                      <WorkflowPanel
+                        state={state}
                         runId={runId}
                         busy={busy}
-                        loadReview={loadReview}
-                        openReview={openReview}
+                        selectedStageId={selectedStageId}
+                        setSelectedStageId={setSelectedStageId}
+                        startWorkflow={startWorkflow}
+                        resetClassify={resetClassify}
+                        cancelRun={cancelRun}
+                        baseUrl={baseUrl}
+                        selectFile={selectFile}
                       />
-                    ) : null}
 
-                    <WorkflowPanel
-                      state={state}
-                      runId={runId}
-                      busy={busy}
-                      selectedStageId={selectedStageId}
-                      setSelectedStageId={setSelectedStageId}
-                      startWorkflow={startWorkflow}
-                      resetClassify={resetClassify}
-                      cancelRun={cancelRun}
-                      baseUrl={baseUrl}
-                      selectFile={selectFile}
-                    />
+                      {showConfigPanel ? (
+                        <ConfigPanel
+                          configText={configText} setConfigText={setConfigText}
+                          cfgSaveToRun={cfgSaveToRun} setCfgSaveToRun={setCfgSaveToRun}
+                          cfgSaveToGlobal={cfgSaveToGlobal} setCfgSaveToGlobal={setCfgSaveToGlobal}
+                          saveConfig={saveConfig}
+                        />
+                      ) : null}
 
-                    {showConfigPanel ? (
-                      <ConfigPanel
-                        configText={configText} setConfigText={setConfigText}
-                        cfgSaveToRun={cfgSaveToRun} setCfgSaveToRun={setCfgSaveToRun}
-                        cfgSaveToGlobal={cfgSaveToGlobal} setCfgSaveToGlobal={setCfgSaveToGlobal}
-                        saveConfig={saveConfig}
-                      />
-                    ) : null}
-
-                    {showSettingsCard ? (
-                      <div className="mt-auto">
+                      {showSettingsCard ? (
                         <SettingsCard
                           state={state}
                           pdfModes={pdfModes}
                           busy={busy}
                           saveOptions={saveOptions}
                         />
-                      </div>
-                    ) : null}
+                      ) : null}
+                    </div>
                   </div>
 
-                  <div className="lg:col-span-8 flex flex-col min-h-0 gap-6 overflow-hidden">
+                  {/* Right Panel: Upload & Preview */}
+                  <div className="lg:col-span-8 flex flex-col h-full min-h-0 gap-4 overflow-hidden">
                     {showUploadCard ? (
-                      <UploadCard
-                        state={state}
-                        runId={runId}
-                        busy={busy}
-                        onUpload={onUpload}
-                      />
+                      <div className="flex-shrink-0">
+                        <UploadCard
+                          state={state}
+                          runId={runId}
+                          busy={busy}
+                          onUpload={onUpload}
+                        />
+                      </div>
                     ) : null}
 
                     <PreviewArea
@@ -212,8 +206,8 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
 
