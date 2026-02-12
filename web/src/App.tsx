@@ -1,5 +1,7 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useEffect } from "react";
 import { AlertCircle } from "lucide-react";
+import { api } from "@/utils/helpers";
+import { Profile, ProfileListItem } from "@/types";
 
 import { useAppState } from "@/hooks/useAppState";
 import { useRunApi } from "@/hooks/useRunApi";
@@ -30,6 +32,7 @@ export default function App() {
     reviewRows, reviewEdits,
     busy, error, selectedStageId, setSelectedStageId,
     dialog,
+    profiles, setProfiles, currentProfileId, setCurrentProfileId,
   } = appState;
 
   const runApi = useRunApi({
@@ -40,8 +43,55 @@ export default function App() {
     pdfPageHref,
     startWorkflow, cancelRun, resetClassify,
     loadCsv, selectFile, saveConfig, saveConfigObject,
-    saveOptions, runStatus,
+    saveOptions, setRunProfileBinding, runStatus,
   } = runApi;
+
+  // Load profiles on mount
+  useEffect(() => {
+    if (!baseUrl) return;
+    api<{ profiles: ProfileListItem[] }>(baseUrl, "/api/profiles")
+      .then((res) => setProfiles(Array.isArray(res.profiles) ? res.profiles : []))
+      .catch((err) => console.error("Failed to load profiles:", err));
+  }, [baseUrl]);
+
+  const boundProfileId = String(state?.profile_binding?.profile_id ?? "").trim();
+
+  useEffect(() => {
+    if (currentProfileId) return;
+    if (boundProfileId) {
+      setCurrentProfileId(boundProfileId);
+      return;
+    }
+    if (profiles.length === 1) {
+      setCurrentProfileId(profiles[0].id);
+    }
+  }, [currentProfileId, boundProfileId, profiles]);
+
+  const handleCreateProfile = async (name: string) => {
+    if (!name.trim()) return;
+    try {
+      const profile = await api<Profile>(baseUrl, "/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const newItem: ProfileListItem = {
+        id: profile.id,
+        name: profile.name,
+        created_at: profile.created_at,
+        updated_at: profile.updated_at,
+        bill_count: 0,
+      };
+      setProfiles((prev) => [newItem, ...prev]);
+      setCurrentProfileId(profile.id);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSelectProfile = (id: string) => {
+    setCurrentProfileId(id);
+  };
 
   const reviewActions = useReviewActions({
     ...appState,
@@ -87,6 +137,11 @@ export default function App() {
           busy={busy} runStatus={runStatus} runName={runName}
           refreshRuns={refreshRuns} onCreateRun={onCreateRun}
           activeView={activeView} setActiveView={setActiveView}
+          profiles={profiles}
+          currentProfileId={currentProfileId}
+          onSelectProfile={handleSelectProfile}
+          onCreateProfile={handleCreateProfile}
+          profileSelectorDisabled={busy}
         />
 
         {error && (
@@ -101,9 +156,9 @@ export default function App() {
               <ProfilesPage
                 baseUrl={baseUrl}
                 runId={runId}
-                currentProfileId={state?.options?.profile_id}
+                currentProfileId={currentProfileId}
                 busy={busy}
-                saveOptions={saveOptions}
+                setRunProfileBinding={setRunProfileBinding}
                 runState={state}
                 confirmAction={appState.confirm}
               />
@@ -188,6 +243,9 @@ export default function App() {
                           runId={runId}
                           busy={busy}
                           onUpload={onUpload}
+                          boundProfileId={boundProfileId}
+                          selectedProfileId={currentProfileId}
+                          profiles={profiles}
                         />
                       </div>
                     ) : null}

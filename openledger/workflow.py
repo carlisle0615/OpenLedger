@@ -12,7 +12,7 @@ from typing import Any
 
 from .config import resolve_global_classifier_config
 from .logger import get_logger
-from .profiles import add_bill_from_run
+from .profiles import add_bill_from_run, get_run_binding_profile_id
 from .stage_contracts import (
     ART_ALIPAY_NORMALIZED,
     ART_BANK_ENRICHED,
@@ -81,7 +81,7 @@ def get_state(paths: Paths) -> dict[str, Any]:
     opts.setdefault("period_day", 20)
     opts.setdefault("period_year", None)
     opts.setdefault("period_month", None)
-    opts.setdefault("profile_id", "")
+    opts.pop("profile_id", None)
     state["options"] = opts
     return state
 
@@ -310,6 +310,8 @@ class WorkflowRunner:
             state_opts = {}
         # 允许显式传入 null 用于清空筛选条件等。
         state_opts.update(options)
+        # run 归属用户改为 DB SSOT，不再使用 options.profile_id。
+        state_opts.pop("profile_id", None)
         state["options"] = state_opts
         save_state(paths, state)
 
@@ -392,7 +394,10 @@ class WorkflowRunner:
             st_logger.info("阶段成功")
 
             if stage_id == "finalize":
-                profile_id = str(state.get("options", {}).get("profile_id") or "").strip()
+                try:
+                    profile_id = get_run_binding_profile_id(self.root, run_id)
+                except Exception:
+                    profile_id = ""
                 if profile_id:
                     try:
                         add_bill_from_run(self.root, profile_id, run_id)

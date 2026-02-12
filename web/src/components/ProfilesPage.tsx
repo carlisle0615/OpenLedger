@@ -4,18 +4,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Profile, ProfileIntegrityIssue, ProfileIntegrityResult, ProfileListItem, RunState } from "@/types";
+import { Profile, ProfileIntegrityIssue, ProfileIntegrityResult, RunState } from "@/types";
 import { api } from "@/utils/helpers";
-import { RefreshCw, UserPlus, Users, Link2, FolderPlus, AlertCircle, Trash2 } from "lucide-react";
+import { RefreshCw, Link2, FolderPlus, AlertCircle, Trash2, User } from "lucide-react";
 
 interface ProfilesPageProps {
     baseUrl: string;
     runId: string;
     currentProfileId?: string;
     busy: boolean;
-    saveOptions: (updates: Partial<{ profile_id: string }>) => Promise<void> | void;
+    setRunProfileBinding: (profileId: string) => Promise<void> | void;
     runState: RunState | null;
     confirmAction: (opts: {
         title: string;
@@ -26,71 +26,49 @@ interface ProfilesPageProps {
     }) => Promise<boolean>;
 }
 
-export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptions, runState, confirmAction }: ProfilesPageProps) {
-    const [profiles, setProfiles] = useState<ProfileListItem[]>([]);
-    const [selectedId, setSelectedId] = useState<string>("");
+export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunProfileBinding, runState, confirmAction }: ProfilesPageProps) {
     const [selected, setSelected] = useState<Profile | null>(null);
-    const [loading, setLoading] = useState(false);
     const [loadingProfile, setLoadingProfile] = useState(false);
-    const [createName, setCreateName] = useState("");
     const [runToAttach, setRunToAttach] = useState("");
+    const [attachYear, setAttachYear] = useState("");
+    const [attachMonth, setAttachMonth] = useState("");
     const [error, setError] = useState("");
     const [integrityIssues, setIntegrityIssues] = useState<ProfileIntegrityIssue[]>([]);
     const [integrityCheckedAt, setIntegrityCheckedAt] = useState("");
     const [integrityLoading, setIntegrityLoading] = useState(false);
     const lastArchiveStamp = useRef<string>("");
 
-    const effectiveSelectedId = selectedId || currentProfileId || "";
-
+    const selectedProfileId = String(currentProfileId || "").trim();
+    const normalizedRunId = String(runId || "").trim();
     const bills = useMemo(() => {
         const list = selected?.bills ?? [];
         return [...list].sort((a, b) => String(a.period_key || "").localeCompare(String(b.period_key || "")));
     }, [selected]);
+    const archivedRunBill = normalizedRunId
+        ? bills.find((b) => String(b.run_id || "").trim() === normalizedRunId)
+        : undefined;
+    const boundProfileId = String(runState?.profile_binding?.profile_id || "").trim();
+    const isCurrentRunBoundToSelected = Boolean(normalizedRunId) && Boolean(selectedProfileId) && boundProfileId === selectedProfileId;
+    const isCurrentRunArchivedToSelected = Boolean(archivedRunBill);
+    const isCurrentRunEffectivelyBound = isCurrentRunBoundToSelected || isCurrentRunArchivedToSelected;
+    const archiveInfo = runState?.profile_archive;
+    const archiveMatches = archiveInfo && archiveInfo.profile_id && archiveInfo.profile_id === selectedProfileId;
+    const nowYear = new Date().getFullYear();
+    const yearOptions = useMemo(() => {
+        const set = new Set<number>([nowYear - 1, nowYear, nowYear + 1]);
+        if (runState?.options?.period_year) set.add(runState.options.period_year);
+        const arr = Array.from(set);
+        arr.sort((a, b) => a - b);
+        return arr;
+    }, [nowYear, runState?.options?.period_year]);
 
     const periodStats = useMemo(() => {
         const keys = bills.map((b) => String(b.period_key || "")).filter(Boolean);
         const counts = new Map<string, number>();
         keys.forEach((k) => counts.set(k, (counts.get(k) || 0) + 1));
         const conflicts = Array.from(counts.entries()).filter(([, v]) => v > 1).map(([k]) => k);
-
-        const parseKey = (k: string) => {
-            const m = /^(\d{4})-(\d{2})$/.exec(k);
-            if (!m) return null;
-            return { y: Number(m[1]), m: Number(m[2]) };
-        };
-        const parsed = keys.map(parseKey).filter(Boolean) as { y: number; m: number }[];
-        if (!parsed.length) {
-            return { conflicts, missing: [] as string[] };
-        }
-        const toIndex = (y: number, m: number) => y * 12 + (m - 1);
-        const min = parsed.reduce((a, b) => (toIndex(a.y, a.m) < toIndex(b.y, b.m) ? a : b));
-        const max = parsed.reduce((a, b) => (toIndex(a.y, a.m) > toIndex(b.y, b.m) ? a : b));
-        const minIdx = toIndex(min.y, min.m);
-        const maxIdx = toIndex(max.y, max.m);
-        const present = new Set(keys);
-        const missing: string[] = [];
-        for (let idx = minIdx; idx <= maxIdx; idx++) {
-            const y = Math.floor(idx / 12);
-            const m = (idx % 12) + 1;
-            const key = `${y}-${String(m).padStart(2, "0")}`;
-            if (!present.has(key)) missing.push(key);
-        }
-        return { conflicts, missing };
+        return { conflicts };
     }, [bills]);
-
-    async function loadProfiles() {
-        if (!baseUrl.trim()) return;
-        setLoading(true);
-        setError("");
-        try {
-            const res = await api<{ profiles: ProfileListItem[] }>(baseUrl, "/api/profiles");
-            setProfiles(Array.isArray(res.profiles) ? res.profiles : []);
-        } catch (e) {
-            setError(String(e));
-        } finally {
-            setLoading(false);
-        }
-    }
 
     async function loadProfile(id: string) {
         if (!id || !baseUrl.trim()) return;
@@ -99,23 +77,22 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
         try {
             const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(id)}`);
             setSelected(profile);
-            setSelectedId(id);
             setIntegrityIssues([]);
             setIntegrityCheckedAt("");
         } catch (e) {
             setError(String(e));
+            setSelected(null);
         } finally {
             setLoadingProfile(false);
         }
     }
 
-    async function checkIntegrity(id?: string) {
-        const targetId = id || selected?.id || "";
-        if (!targetId || !baseUrl.trim()) return;
+    async function checkIntegrity() {
+        if (!selectedProfileId || !baseUrl.trim()) return;
         setIntegrityLoading(true);
         setError("");
         try {
-            const res = await api<ProfileIntegrityResult>(baseUrl, `/api/profiles/${encodeURIComponent(targetId)}/check`);
+            const res = await api<ProfileIntegrityResult>(baseUrl, `/api/profiles/${encodeURIComponent(selectedProfileId)}/check`);
             setIntegrityIssues(Array.isArray(res.issues) ? res.issues : []);
             setIntegrityCheckedAt(new Date().toISOString());
         } catch (e) {
@@ -126,68 +103,63 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
     }
 
     useEffect(() => {
-        loadProfiles().catch(() => { });
-    }, [baseUrl]);
-
-    useEffect(() => {
-        if (!effectiveSelectedId) {
+        if (!selectedProfileId) {
             setSelected(null);
+            setIntegrityIssues([]);
+            setIntegrityCheckedAt("");
             return;
         }
-        if (selected?.id === effectiveSelectedId) return;
-        loadProfile(effectiveSelectedId).catch(() => { });
-    }, [effectiveSelectedId]);
+        loadProfile(selectedProfileId).catch(() => { });
+    }, [selectedProfileId, baseUrl]);
 
     useEffect(() => {
         const info = runState?.profile_archive;
         if (!info || !info.updated_at) return;
         if (info.updated_at === lastArchiveStamp.current) return;
         lastArchiveStamp.current = info.updated_at;
-        if (info.status === "ok") {
-            if (info.profile_id) {
-                loadProfiles().catch(() => { });
-                if (info.profile_id === effectiveSelectedId) {
-                    loadProfile(info.profile_id).catch(() => { });
-                }
-            }
+        if (info.profile_id && info.profile_id === selectedProfileId) {
+            loadProfile(info.profile_id).catch(() => { });
         }
-    }, [runState?.profile_archive?.updated_at, effectiveSelectedId]);
+    }, [runState?.profile_archive?.updated_at, selectedProfileId]);
 
-    async function handleCreate() {
-        const name = createName.trim();
-        if (!name) return;
-        setLoading(true);
+    async function bindCurrentRun() {
+        if (!runId || !selectedProfileId) return;
         setError("");
         try {
-            const profile = await api<Profile>(baseUrl, "/api/profiles", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name }),
-            });
-            setCreateName("");
-            await loadProfiles();
-            setSelected(profile);
-            setSelectedId(profile.id);
+            await setRunProfileBinding(selectedProfileId);
         } catch (e) {
             setError(String(e));
-        } finally {
-            setLoading(false);
         }
     }
 
     async function attachRun(runIdToUse: string) {
-        if (!selected?.id || !runIdToUse) return;
+        if (!selectedProfileId || !runIdToUse) return;
+        const y = attachYear.trim();
+        const m = attachMonth.trim();
+        if ((y && !m) || (!y && m)) {
+            setError("请选择完整的归属年月（年+月），或都不选。");
+            return;
+        }
         setLoadingProfile(true);
         setError("");
         try {
-            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(selected.id)}/bills`, {
+            const payload: Record<string, unknown> = { run_id: runIdToUse };
+            if (y && m) {
+                payload.period_year = Number(y);
+                payload.period_month = Number(m);
+            } else {
+                payload.period_year = null;
+                payload.period_month = null;
+            }
+            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(selectedProfileId)}/bills`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ run_id: runIdToUse }),
+                body: JSON.stringify(payload),
             });
             setSelected(profile);
             setRunToAttach("");
-            await loadProfiles();
+            setAttachYear("");
+            setAttachMonth("");
         } catch (e) {
             setError(String(e));
         } finally {
@@ -195,11 +167,13 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
         }
     }
 
-    async function deletePeriod(periodKey: string) {
-        if (!selected?.id || !periodKey) return;
+    async function deleteBill(periodKey: string, billRunId: string) {
+        if (!selectedProfileId || (!periodKey && !billRunId)) return;
         const ok = await confirmAction({
-            title: "确认删除账期？",
-            description: `将删除账期 ${periodKey} 下的所有归档记录。`,
+            title: "确认删除归档？",
+            description: periodKey
+                ? `将删除账期 ${periodKey} 下的所有归档记录。`
+                : `将删除 run ${billRunId} 的归档记录。`,
             confirmText: "确认删除",
             cancelText: "取消",
             tone: "danger",
@@ -208,13 +182,12 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
         setLoadingProfile(true);
         setError("");
         try {
-            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(selected.id)}/bills/remove`, {
+            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(selectedProfileId)}/bills/remove`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ period_key: periodKey }),
+                body: JSON.stringify(periodKey ? { period_key: periodKey } : { run_id: billRunId }),
             });
             setSelected(profile);
-            await loadProfiles();
         } catch (e) {
             setError(String(e));
         } finally {
@@ -223,7 +196,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
     }
 
     async function reimportPeriod(periodKey: string) {
-        if (!selected?.id || !periodKey || !runId) return;
+        if (!selectedProfileId || !periodKey || !runId) return;
         const ok = await confirmAction({
             title: "确认重导账期？",
             description: `将删除账期 ${periodKey} 的现有归档，并使用当前任务 ${runId} 重新归档。`,
@@ -235,13 +208,12 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
         setLoadingProfile(true);
         setError("");
         try {
-            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(selected.id)}/bills/reimport`, {
+            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(selectedProfileId)}/bills/reimport`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ period_key: periodKey, run_id: runId }),
             });
             setSelected(profile);
-            await loadProfiles();
         } catch (e) {
             setError(String(e));
         } finally {
@@ -249,9 +221,6 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
         }
     }
 
-    const selectedMeta = profiles.find((p) => p.id === (selected?.id || effectiveSelectedId));
-    const archiveInfo = runState?.profile_archive;
-    const archiveMatches = archiveInfo && archiveInfo.profile_id && archiveInfo.profile_id === (selected?.id || currentProfileId);
     const issueLabel = (issue: string) => {
         switch (issue) {
             case "missing_period_key":
@@ -282,56 +251,22 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-4 space-y-4">
                 <Card>
-                    <CardHeader className="py-3 flex flex-row items-center justify-between">
+                    <CardHeader className="py-3">
                         <CardTitle className="text-base flex items-center gap-2">
-                            <Users className="h-4 w-4" /> 用户
+                            <User className="h-4 w-4" /> 当前归属用户
                         </CardTitle>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 px-2"
-                            onClick={() => loadProfiles().catch(() => { })}
-                            disabled={loading || busy}
-                        >
-                            <RefreshCw className="h-3.5 w-3.5 mr-1" />
-                            刷新
-                        </Button>
                     </CardHeader>
-                    <CardContent className="space-y-3">
-                        <div className="flex items-center gap-2">
-                            <Input
-                                value={createName}
-                                onChange={(e) => setCreateName(e.target.value)}
-                                placeholder="新用户名称"
-                                className="h-8 text-xs"
-                                disabled={loading || busy}
-                            />
-                            <Button size="sm" className="h-8" onClick={handleCreate} disabled={loading || busy || !createName.trim()}>
-                                <UserPlus className="h-3.5 w-3.5 mr-1" />
-                                创建
-                            </Button>
-                        </div>
-                        <Separator />
-                        <div className="space-y-1">
-                            {profiles.length ? (
-                                profiles.map((p) => (
-                                    <button
-                                        key={p.id}
-                                        type="button"
-                                        onClick={() => loadProfile(p.id)}
-                                        className={`w-full text-left px-2 py-2 rounded-md border text-xs transition-colors ${effectiveSelectedId === p.id ? "border-primary bg-primary/10" : "border-transparent hover:border-border hover:bg-accent"}`}
-                                    >
-                                        <div className="flex items-center justify-between">
-                                            <span className="font-medium truncate">{p.name || p.id}</span>
-                                            <Badge variant="outline" className="text-[10px]">{p.bill_count} 账单</Badge>
-                                        </div>
-                                        <div className="text-[10px] text-muted-foreground font-mono mt-1 truncate">{p.id}</div>
-                                    </button>
-                                ))
-                            ) : (
-                                <div className="text-[11px] text-muted-foreground italic">暂无用户</div>
-                            )}
-                        </div>
+                    <CardContent className="space-y-2">
+                        {selectedProfileId ? (
+                            <>
+                                <div className="text-sm font-medium">{selected?.name || selectedProfileId}</div>
+                                <div className="text-[11px] text-muted-foreground font-mono break-all">{selectedProfileId}</div>
+                            </>
+                        ) : (
+                            <div className="text-[11px] text-muted-foreground">
+                                请先在顶部选择用户。
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
 
@@ -343,23 +278,30 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                     </CardHeader>
                     <CardContent className="space-y-2">
                         <div className="text-[11px] text-muted-foreground">
-                            当前任务：{runId ? <span className="font-mono">{runId}</span> : "未选择"}
+                            当前任务：{runId ? <span className="font-mono" title={runId}>{runId}</span> : "未选择"}
                         </div>
-                        <div className="flex items-center gap-2">
-                            <Button
-                                size="sm"
-                                className="h-8"
-                                disabled={!runId || !selected?.id || busy}
-                                onClick={() => saveOptions({ profile_id: selected?.id || "" })}
-                            >
-                                绑定到当前任务
-                            </Button>
-                            {currentProfileId && (
-                                <Badge variant="secondary" className="text-[10px]">
-                                    已绑定：{currentProfileId}
-                                </Badge>
-                            )}
+                        <div className="text-[11px] text-muted-foreground">
+                            当前已绑定：{boundProfileId ? <span className="font-mono" title={boundProfileId}>{boundProfileId}</span> : "未绑定"}
                         </div>
+                        <div className="text-[11px] text-muted-foreground">
+                            当前任务归档：{isCurrentRunArchivedToSelected ? "已归档到该用户" : "未归档到该用户"}
+                        </div>
+                        <Button
+                            size="sm"
+                            className="h-8 w-full"
+                            disabled={!normalizedRunId || !selectedProfileId || busy || loadingProfile || isCurrentRunEffectivelyBound}
+                            onClick={() => void bindCurrentRun()}
+                        >
+                            {isCurrentRunEffectivelyBound ? "已绑定当前任务" : "绑定当前任务到该用户"}
+                        </Button>
+                        <div className="text-[11px] text-muted-foreground">
+                            该绑定用于 finalize 自动归档；归档记录存在也会视为已绑定显示。
+                        </div>
+                        {isCurrentRunArchivedToSelected ? (
+                            <div className="text-[11px] text-muted-foreground">
+                                已归档账期：{archivedRunBill?.period_key || "未指定月"}
+                            </div>
+                        ) : null}
                         {archiveInfo && archiveMatches ? (
                             <div className={`text-[11px] ${archiveInfo.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}>
                                 {archiveInfo.status === "failed"
@@ -369,14 +311,81 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                         ) : null}
                     </CardContent>
                 </Card>
+
+                <Card>
+                    <CardHeader className="py-3">
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <FolderPlus className="h-4 w-4" /> 手动归档 Run
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                        <Input
+                            value={runToAttach}
+                            onChange={(e) => setRunToAttach(e.target.value)}
+                            placeholder="输入 run_id 归档"
+                            className="h-8 text-xs"
+                            disabled={!selectedProfileId || busy}
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                            <Select value={attachYear || "__none__"} onValueChange={(v) => setAttachYear(v === "__none__" ? "" : v)}>
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue placeholder="归属年（可空）" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__none__">不指定年份</SelectItem>
+                                    {yearOptions.map((y) => (
+                                        <SelectItem key={y} value={String(y)} className="text-xs font-mono">
+                                            {y}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <Select value={attachMonth || "__none__"} onValueChange={(v) => setAttachMonth(v === "__none__" ? "" : v)}>
+                                <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue placeholder="归属月（可空）" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__none__">不指定月份</SelectItem>
+                                    {Array.from({ length: 12 }).map((_, i) => (
+                                        <SelectItem key={i + 1} value={String(i + 1)} className="text-xs">
+                                            {i + 1}月
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                            同一用户下同一个年/月只能绑定一个 run。
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                size="sm"
+                                className="h-8"
+                                onClick={() => void attachRun(runToAttach.trim())}
+                                disabled={!selectedProfileId || busy || !runToAttach.trim()}
+                            >
+                                归档 run_id
+                            </Button>
+                            {runId ? (
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8"
+                                    onClick={() => void attachRun(runId)}
+                                    disabled={!selectedProfileId || busy}
+                                >
+                                    使用当前任务
+                                </Button>
+                            ) : null}
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
 
             <div className="lg:col-span-8 space-y-4">
                 <Card>
                     <CardHeader className="py-3">
-                        <CardTitle className="text-base">
-                            {selected?.name || selectedMeta?.name || "用户详情"}
-                        </CardTitle>
+                        <CardTitle className="text-base">归档详情</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {selected ? (
@@ -388,7 +397,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                                 </div>
                             </>
                         ) : (
-                            <div className="text-[11px] text-muted-foreground italic">请选择用户</div>
+                            <div className="text-[11px] text-muted-foreground italic">请先在顶部选择用户</div>
                         )}
 
                         <div className="pt-2 border-t space-y-2">
@@ -398,14 +407,14 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                                     size="sm"
                                     variant="outline"
                                     className="h-7 px-2"
-                                    onClick={() => checkIntegrity()}
-                                    disabled={!selected?.id || integrityLoading || busy}
+                                    onClick={() => void checkIntegrity()}
+                                    disabled={!selectedProfileId || integrityLoading || busy}
                                 >
                                     <RefreshCw className="h-3.5 w-3.5 mr-1" />
                                     检查
                                 </Button>
                             </div>
-                            {!selected?.id ? (
+                            {!selectedProfileId ? (
                                 <div className="text-[11px] text-muted-foreground italic">请选择用户后检查</div>
                             ) : integrityCheckedAt ? (
                                 <>
@@ -418,7 +427,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                                                 <div key={`${issue.run_id}-${issue.issue}-${idx}`} className="text-[11px] text-muted-foreground">
                                                     <span className="font-mono">{issue.period_key || "-"}</span>
                                                     <span className="ml-2">{issueLabel(issue.issue)}</span>
-                                                    {issue.run_id ? <span className="ml-2 font-mono">run={issue.run_id}</span> : null}
+                                                    {issue.run_id ? <span className="ml-2 font-mono" title={issue.run_id}>run={issue.run_id}</span> : null}
                                                 </div>
                                             ))}
                                             {integrityIssues.length > 4 ? (
@@ -436,58 +445,22 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                     </CardContent>
                 </Card>
 
+                {error ? (
+                    <div className="text-xs text-destructive">{error}</div>
+                ) : null}
+
                 <Card>
                     <CardHeader className="py-3 flex flex-row items-center justify-between">
-                        <CardTitle className="text-base flex items-center gap-2">
-                            <FolderPlus className="h-4 w-4" /> 账单归档
-                        </CardTitle>
+                        <CardTitle className="text-base">归档账单列表</CardTitle>
                         <div className="text-[11px] text-muted-foreground">
                             {selected ? `${bills.length} 条` : "—"}
                         </div>
                     </CardHeader>
                     <CardContent className="space-y-3">
-                        <div className="flex items-center gap-2">
-                            <Input
-                                value={runToAttach}
-                                onChange={(e) => setRunToAttach(e.target.value)}
-                                placeholder="输入 run_id 归档"
-                                className="h-8 text-xs"
-                                disabled={!selected?.id || busy}
-                            />
-                            <Button
-                                size="sm"
-                                className="h-8"
-                                onClick={() => attachRun(runToAttach.trim())}
-                                disabled={!selected?.id || busy || !runToAttach.trim()}
-                            >
-                                归档
-                            </Button>
-                            {runId ? (
-                                <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-8"
-                                    onClick={() => attachRun(runId)}
-                                    disabled={!selected?.id || busy}
-                                >
-                                    使用当前任务
-                                </Button>
-                            ) : null}
-                        </div>
-                        {error ? (
-                            <div className="text-xs text-destructive">{error}</div>
-                        ) : null}
-                        {(periodStats.conflicts.length > 0 || periodStats.missing.length > 0) && (
+                        {periodStats.conflicts.length > 0 && (
                             <div className="text-[11px] text-muted-foreground flex items-start gap-2">
                                 <AlertCircle className="h-3.5 w-3.5 mt-0.5 text-[hsl(var(--warning))]" />
-                                <div className="space-y-1">
-                                    {periodStats.conflicts.length > 0 && (
-                                        <div>账期冲突：{periodStats.conflicts.join(", ")}</div>
-                                    )}
-                                    {periodStats.missing.length > 0 && (
-                                        <div>账期缺失：{periodStats.missing.join(", ")}</div>
-                                    )}
-                                </div>
+                                <div>账期冲突：{periodStats.conflicts.join(", ")}</div>
                             </div>
                         )}
                         <ScrollArea className="h-[420px] border rounded-md">
@@ -513,7 +486,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                                         </TableRow>
                                     ) : bills.length ? (
                                         bills.map((b) => (
-                                            <TableRow key={`${b.run_id}-${b.period_key}`} className="h-8">
+                                            <TableRow key={`${b.run_id}-${b.period_key}-${b.year ?? "none"}-${b.month ?? "none"}`} className="h-8">
                                                 <TableCell className="text-xs font-mono whitespace-nowrap">{b.period_key || "-"}</TableCell>
                                                 <TableCell className="text-xs font-mono whitespace-nowrap">
                                                     {b.period_start && b.period_end ? `${b.period_start} ~ ${b.period_end}` : "-"}
@@ -524,6 +497,9 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                                                         {b.cross_month ? <Badge variant="outline" className="text-[10px]">跨月</Badge> : null}
                                                         {periodStats.conflicts.includes(String(b.period_key || "")) ? (
                                                             <Badge variant="destructive" className="text-[10px]">冲突</Badge>
+                                                        ) : null}
+                                                        {!b.period_key ? (
+                                                            <Badge variant="outline" className="text-[10px]">未指定月</Badge>
                                                         ) : null}
                                                     </div>
                                                 </TableCell>
@@ -539,7 +515,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                                                                 size="sm"
                                                                 variant="outline"
                                                                 className="h-7 px-2 text-[10px]"
-                                                                onClick={() => reimportPeriod(String(b.period_key || ""))}
+                                                                onClick={() => void reimportPeriod(String(b.period_key || ""))}
                                                                 disabled={!b.period_key}
                                                             >
                                                                 重导
@@ -549,8 +525,8 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, saveOptio
                                                             size="sm"
                                                             variant="ghost"
                                                             className="h-7 px-2"
-                                                            disabled={!b.period_key}
-                                                            onClick={() => deletePeriod(String(b.period_key || ""))}
+                                                            disabled={!b.period_key && !b.run_id}
+                                                            onClick={() => void deleteBill(String(b.period_key || ""), String(b.run_id || ""))}
                                                         >
                                                             <Trash2 className="h-3.5 w-3.5 text-destructive" />
                                                         </Button>

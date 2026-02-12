@@ -23,6 +23,12 @@ export type RunState = {
         error?: string;
         updated_at?: string;
     };
+    profile_binding?: {
+        run_id: string;
+        profile_id: string;
+        created_at?: string;
+        updated_at?: string;
+    } | null;
     inputs: { name: string; path: string; size: number }[];
     options: {
         pdf_mode?: string;
@@ -31,7 +37,6 @@ export type RunState = {
         period_day?: number | null;
         period_year: number | null;
         period_month: number | null;
-        profile_id?: string;
     };
     stages: Stage[];
 };

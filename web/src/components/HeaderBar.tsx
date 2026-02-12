@@ -15,6 +15,8 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
+import { ProfileListItem } from "@/types";
+import { ProfileSelector } from "@/components/ProfileSelector";
 
 interface HeaderBarProps {
     baseUrl: string;
@@ -34,6 +36,11 @@ interface HeaderBarProps {
     onCreateRun: (name: string) => Promise<void>;
     activeView: "workspace" | "profiles" | "capabilities";
     setActiveView: (v: "workspace" | "profiles" | "capabilities") => void;
+    profiles: ProfileListItem[];
+    currentProfileId: string;
+    onSelectProfile: (id: string) => void;
+    onCreateProfile: (name: string) => void;
+    profileSelectorDisabled?: boolean;
 }
 
 export function HeaderBar({
@@ -43,6 +50,8 @@ export function HeaderBar({
     busy, runStatus, runName,
     refreshRuns, onCreateRun,
     activeView, setActiveView,
+    profiles, currentProfileId, onSelectProfile, onCreateProfile,
+    profileSelectorDisabled = false,
 }: HeaderBarProps) {
     const [settingsOpen, setSettingsOpen] = React.useState(false);
     const [createOpen, setCreateOpen] = React.useState(false);
@@ -96,20 +105,30 @@ export function HeaderBar({
                 </div>
 
                 <div className="flex items-center gap-2">
+                    {/* Profile Selector */}
+                    <ProfileSelector
+                        profiles={profiles}
+                        currentProfileId={currentProfileId}
+                        onSelect={onSelectProfile}
+                        onCreate={onCreateProfile}
+                        disabled={busy || profileSelectorDisabled}
+                    />
+                    <Separator orientation="vertical" className="h-6 mx-2" />
+
                     {/* Run Selector */}
                     <div className="flex items-center gap-2">
                         <Select value={runId} onValueChange={setRunId}>
-                            <SelectTrigger className="w-[180px] h-8 text-xs bg-muted/30 border-dashed">
+                            <SelectTrigger className="w-[180px] h-8 text-xs bg-muted/30 border-dashed" title={runId || "未选择任务"}>
                                 <SelectValue placeholder="选择任务" />
                             </SelectTrigger>
                             <SelectContent>
                                 {runs.map((r) => (
-                                    <SelectItem key={r} value={r} className="text-xs">
+                                    <SelectItem key={r} value={r} className="text-xs" title={r}>
                                         <div className="flex items-center gap-2">
-                                            <span className="font-mono text-xs">{r.slice(0, 8)}...</span>
+                                            <span className="font-mono text-xs truncate max-w-[120px]" title={r}>{r}</span>
                                             {(() => {
                                                 const name = String(runsMeta.find((m) => m.id === r)?.name ?? "").trim();
-                                                return name ? <span className="text-muted-foreground truncate max-w-[120px]">{name}</span> : null;
+                                                return name ? <span className="text-muted-foreground truncate max-w-[120px]" title={name}>{name}</span> : null;
                                             })()}
                                         </div>
                                     </SelectItem>

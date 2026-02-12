@@ -12,6 +12,8 @@ from typing import Any, Iterable
 
 from .state import load_json, safe_rel_path, utc_now_iso
 
+_MISSING = object()
+
 
 def _db_path(root: Path) -> Path:
     return root / "profiles.db"
@@ -61,7 +63,21 @@ def _init_db(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS run_bindings (
+            run_id TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_bills_profile_period ON bills(profile_id, period_key)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_run_bindings_profile ON run_bindings(profile_id)"
     )
 
 
@@ -332,6 +348,160 @@ def update_profile(root: Path, profile_id: str, updates: dict[str, Any]) -> dict
     return load_profile(root, profile_id)
 
 
+def _run_state_path(root: Path, run_id: str) -> Path:
+    return root / "runs" / run_id / "state.json"
+
+
+def _ensure_run_exists(root: Path, run_id: str) -> None:
+    if not _run_state_path(root, run_id).exists():
+        raise FileNotFoundError(f"run not found: {run_id}")
+
+
+def _bill_owner_profile_id(conn: sqlite3.Connection, run_id: str) -> str:
+    row = conn.execute(
+        """
+        SELECT profile_id
+        FROM bills
+        WHERE run_id = ?
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (run_id,),
+    ).fetchone()
+    if not row:
+        return ""
+    return str(row["profile_id"] or "").strip()
+
+
+def _legacy_state_profile_id(root: Path, run_id: str) -> str:
+    state_path = _run_state_path(root, run_id)
+    if not state_path.exists():
+        return ""
+    try:
+        state = load_json(state_path)
+    except Exception:
+        return ""
+    opts = state.get("options")
+    if not isinstance(opts, dict):
+        return ""
+    return str(opts.get("profile_id") or "").strip()
+
+
+def _upsert_run_binding_conn(conn: sqlite3.Connection, run_id: str, profile_id: str, now: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO run_bindings(run_id, profile_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(run_id) DO UPDATE SET
+            profile_id=excluded.profile_id,
+            updated_at=excluded.updated_at
+        """,
+        (run_id, profile_id, now, now),
+    )
+
+
+def _binding_row(conn: sqlite3.Connection, run_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT run_id, profile_id, created_at, updated_at FROM run_bindings WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+
+
+def get_run_binding(root: Path, run_id: str) -> dict[str, Any] | None:
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        raise ValueError("missing run_id")
+    _ensure_run_exists(root, run_id)
+
+    with _connect(root) as conn:
+        _init_db(conn)
+        row = _binding_row(conn, run_id)
+        if row:
+            return {
+                "run_id": run_id,
+                "profile_id": str(row["profile_id"] or "").strip(),
+                "created_at": str(row["created_at"] or ""),
+                "updated_at": str(row["updated_at"] or ""),
+            }
+
+        inferred_profile_id = _bill_owner_profile_id(conn, run_id)
+        if not inferred_profile_id:
+            inferred_profile_id = _legacy_state_profile_id(root, run_id)
+        if not inferred_profile_id:
+            return None
+
+        # lazy migration: if legacy state / bills has owner info, backfill to run_bindings.
+        profile_row = conn.execute(
+            "SELECT id FROM profiles WHERE id = ?",
+            (inferred_profile_id,),
+        ).fetchone()
+        if not profile_row:
+            return None
+        now = utc_now_iso()
+        _upsert_run_binding_conn(conn, run_id, inferred_profile_id, now)
+        row = _binding_row(conn, run_id)
+        if not row:
+            return None
+        return {
+            "run_id": run_id,
+            "profile_id": str(row["profile_id"] or "").strip(),
+            "created_at": str(row["created_at"] or ""),
+            "updated_at": str(row["updated_at"] or ""),
+        }
+
+
+def get_run_binding_profile_id(root: Path, run_id: str) -> str:
+    binding = get_run_binding(root, run_id)
+    if not binding:
+        return ""
+    return str(binding.get("profile_id") or "").strip()
+
+
+def set_run_binding(root: Path, run_id: str, profile_id: str) -> dict[str, Any]:
+    run_id = str(run_id or "").strip()
+    profile_id = str(profile_id or "").strip()
+    if not run_id:
+        raise ValueError("missing run_id")
+    if not profile_id:
+        raise ValueError("missing profile_id")
+    _ensure_run_exists(root, run_id)
+
+    with _connect(root) as conn:
+        _init_db(conn)
+        profile_row = conn.execute(
+            "SELECT id FROM profiles WHERE id = ?",
+            (profile_id,),
+        ).fetchone()
+        if not profile_row:
+            raise FileNotFoundError(profile_id)
+
+        bill_owner = _bill_owner_profile_id(conn, run_id)
+        if bill_owner and bill_owner != profile_id:
+            raise ValueError(f"run {run_id} 已归档到用户 {bill_owner}，不可绑定到 {profile_id}")
+
+        now = utc_now_iso()
+        _upsert_run_binding_conn(conn, run_id, profile_id, now)
+        row = _binding_row(conn, run_id)
+        if not row:
+            raise RuntimeError("run binding save failed")
+        return {
+            "run_id": run_id,
+            "profile_id": str(row["profile_id"] or "").strip(),
+            "created_at": str(row["created_at"] or ""),
+            "updated_at": str(row["updated_at"] or ""),
+        }
+
+
+def clear_run_binding(root: Path, run_id: str) -> None:
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        raise ValueError("missing run_id")
+    _ensure_run_exists(root, run_id)
+    with _connect(root) as conn:
+        _init_db(conn)
+        conn.execute("DELETE FROM run_bindings WHERE run_id = ?", (run_id,))
+
+
 def build_bill_from_run(root: Path, run_id: str) -> dict[str, Any]:
     run_dir = root / "runs" / run_id
     state_path = run_dir / "state.json"
@@ -422,19 +592,100 @@ def _upsert_bill(conn: sqlite3.Connection, profile_id: str, bill: dict[str, Any]
     )
 
 
-def add_bill_from_run(root: Path, profile_id: str, run_id: str) -> dict[str, Any]:
+def _normalize_period_override(period_year: Any, period_month: Any) -> tuple[int | None, int | None]:
+    year = _to_int(period_year)
+    month = _to_int(period_month)
+    if year is None and month is None:
+        return None, None
+    if year is None or month is None:
+        raise ValueError("period_year 和 period_month 需同时提供，或同时为空")
+    if month < 1 or month > 12:
+        raise ValueError("period_month 必须在 1~12")
+    if year < 1900 or year > 2200:
+        raise ValueError("period_year 超出支持范围")
+    return year, month
+
+
+def _apply_period_override(bill: dict[str, Any], year: int | None, month: int | None) -> None:
+    if not year or not month:
+        bill["year"] = None
+        bill["month"] = None
+        bill["period_key"] = ""
+        bill["period_start"] = ""
+        bill["period_end"] = ""
+        bill["period_label"] = ""
+        bill["cross_month"] = False
+        return
+
+    mode = str(bill.get("period_mode") or "billing").strip() or "billing"
+    day = _to_int(bill.get("period_day")) or 20
+    period_start, period_end, period_label = _calc_period_range(year, month, mode, day)
+    bill["year"] = year
+    bill["month"] = month
+    bill["period_key"] = f"{year:04d}-{month:02d}"
+    bill["period_start"] = period_start.isoformat() if period_start else ""
+    bill["period_end"] = period_end.isoformat() if period_end else ""
+    bill["period_label"] = period_label
+    bill["cross_month"] = bool(
+        period_start and period_end and (period_start.year, period_start.month) != (period_end.year, period_end.month)
+    )
+
+
+def _ensure_unique_period_binding(conn: sqlite3.Connection, profile_id: str, bill: dict[str, Any]) -> None:
+    year = _to_int(bill.get("year"))
+    month = _to_int(bill.get("month"))
+    run_id = str(bill.get("run_id") or "").strip()
+    if not year or not month or not run_id:
+        return
+    row = conn.execute(
+        """
+        SELECT run_id
+        FROM bills
+        WHERE profile_id = ? AND year = ? AND month = ? AND run_id != ?
+        LIMIT 1
+        """,
+        (profile_id, year, month, run_id),
+    ).fetchone()
+    if row:
+        raise ValueError(f"账期 {year:04d}-{month:02d} 已绑定 run {row['run_id']}，同月不能绑定多个 run")
+
+
+def add_bill_from_run(
+    root: Path,
+    profile_id: str,
+    run_id: str,
+    *,
+    period_year: Any = _MISSING,
+    period_month: Any = _MISSING,
+) -> dict[str, Any]:
     bill = build_bill_from_run(root, run_id)
+    run_id = str(bill.get("run_id") or run_id).strip()
     now = utc_now_iso()
+    if period_year is not _MISSING or period_month is not _MISSING:
+        year, month = _normalize_period_override(period_year, period_month)
+        _apply_period_override(bill, year, month)
 
     with _connect(root) as conn:
         _init_db(conn)
         row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
         if not row:
             raise FileNotFoundError(profile_id)
+        binding_row = _binding_row(conn, run_id)
+        if binding_row:
+            existing_profile_id = str(binding_row["profile_id"] or "").strip()
+            if existing_profile_id and existing_profile_id != profile_id:
+                raise ValueError(
+                    f"run {run_id} 已绑定到用户 {existing_profile_id}，不可归档到 {profile_id}"
+                )
+        bill_owner = _bill_owner_profile_id(conn, run_id)
+        if bill_owner and bill_owner != profile_id:
+            raise ValueError(f"run {run_id} 已归档到用户 {bill_owner}，不可归档到 {profile_id}")
+        _ensure_unique_period_binding(conn, profile_id, bill)
         bill["updated_at"] = now
         if not bill.get("created_at"):
             bill["created_at"] = now
         _upsert_bill(conn, profile_id, bill)
+        _upsert_run_binding_conn(conn, run_id, profile_id, now)
         conn.execute(
             "UPDATE profiles SET updated_at = ? WHERE id = ?",
             (now, profile_id),
@@ -496,14 +747,26 @@ def reimport_bill(
         row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
         if not row:
             raise FileNotFoundError(profile_id)
+        binding_row = _binding_row(conn, run_id)
+        if binding_row:
+            existing_profile_id = str(binding_row["profile_id"] or "").strip()
+            if existing_profile_id and existing_profile_id != profile_id:
+                raise ValueError(
+                    f"run {run_id} 已绑定到用户 {existing_profile_id}，不可归档到 {profile_id}"
+                )
+        bill_owner = _bill_owner_profile_id(conn, run_id)
+        if bill_owner and bill_owner != profile_id:
+            raise ValueError(f"run {run_id} 已归档到用户 {bill_owner}，不可归档到 {profile_id}")
         conn.execute(
             "DELETE FROM bills WHERE profile_id = ? AND period_key = ?",
             (profile_id, period_key),
         )
+        _ensure_unique_period_binding(conn, profile_id, bill)
         bill["updated_at"] = now
         if not bill.get("created_at"):
             bill["created_at"] = now
         _upsert_bill(conn, profile_id, bill)
+        _upsert_run_binding_conn(conn, run_id, profile_id, now)
         conn.execute(
             "UPDATE profiles SET updated_at = ? WHERE id = ?",
             (now, profile_id),
@@ -518,14 +781,6 @@ def check_profile_integrity(root: Path, profile_id: str) -> dict[str, Any]:
     for bill in profile.get("bills", []) or []:
         run_id = str(bill.get("run_id") or "")
         period_key = str(bill.get("period_key") or "")
-        if not period_key:
-            issues.append(
-                {
-                    "run_id": run_id,
-                    "period_key": period_key,
-                    "issue": "missing_period_key",
-                }
-            )
         run_dir = root / "runs" / run_id
         if not run_dir.exists():
             issues.append(

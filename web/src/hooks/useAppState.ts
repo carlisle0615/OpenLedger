@@ -3,6 +3,7 @@ import {
     ClassifierConfig,
     CsvPreview,
     FileItem,
+    ProfileListItem,
     PdfMode,
     PdfPreview,
     RunState,
@@ -28,6 +29,8 @@ export function useAppState() {
     const [pdfModes, setPdfModes] = useState<PdfMode[]>([]);
     const [newRunName, setNewRunName] = useState<string>("");
     const [state, setState] = useState<RunState | null>(null);
+    const [profiles, setProfiles] = useState<ProfileListItem[]>([]);
+    const [currentProfileId, setCurrentProfileId] = useState<string>("");
     const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
     const [csvPreview, setCsvPreview] = useState<CsvPreview | null>(null);
     const [pdfPreview, setPdfPreview] = useState<PdfPreview | null>(null);
@@ -94,7 +97,8 @@ export function useAppState() {
         backendStatus, setBackendStatus, backendError, setBackendError,
         pdfModes, setPdfModes, newRunName, setNewRunName,
         // 运行状态
-        state, setState, selectedFile, setSelectedFile,
+        state, setState, profiles, setProfiles, currentProfileId, setCurrentProfileId,
+        selectedFile, setSelectedFile,
         csvPreview, setCsvPreview, pdfPreview, setPdfPreview, textPreview, setTextPreview,
         previewError, setPreviewError, csvLimit,
         // 配置

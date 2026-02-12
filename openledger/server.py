@@ -27,11 +27,14 @@ from .parsers.pdf import list_pdf_modes
 from .profiles import (
     add_bill_from_run,
     check_profile_integrity,
+    clear_run_binding,
     create_profile,
+    get_run_binding,
     list_profiles,
     load_profile,
     remove_bills,
     reimport_bill,
+    set_run_binding,
     update_profile,
 )
 from .settings import load_settings
@@ -164,6 +167,21 @@ def _parse_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
         return json.loads(raw.decode("utf-8"))
     except Exception:
         raise ValueError("invalid json body")
+
+
+def _state_with_binding(root: Path, run_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    out = dict(state)
+    opts = out.get("options")
+    if isinstance(opts, dict) and "profile_id" in opts:
+        opts = dict(opts)
+        opts.pop("profile_id", None)
+        out["options"] = opts
+    try:
+        binding = get_run_binding(root, run_id)
+    except Exception:
+        binding = None
+    out["profile_binding"] = binding
+    return out
 
 
 _DISPOSITION_RE = re.compile(
@@ -420,7 +438,18 @@ def make_handler(server: WorkflowHTTPServer):
             if m:
                 run_id = m.group("run_id")
                 paths = make_paths(root, run_id)
-                _send_json(self, 200, get_state(paths))
+                _send_json(self, 200, _state_with_binding(root, run_id, get_state(paths)))
+                return
+
+            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/profile-binding", path)
+            if m:
+                run_id = m.group("run_id")
+                try:
+                    binding = get_run_binding(root, run_id)
+                except FileNotFoundError:
+                    _send_json(self, 404, {"error": "run not found"})
+                    return
+                _send_json(self, 200, {"run_id": run_id, "binding": binding})
                 return
 
             m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)", path)
@@ -720,7 +749,11 @@ def make_handler(server: WorkflowHTTPServer):
                 server.logger.bind(run_id=paths.run_dir.name, stage_id="-").info(
                     "已创建 Run"
                 )
-                _send_json(self, 200, get_state(paths))
+                _send_json(
+                    self,
+                    200,
+                    _state_with_binding(root, paths.run_dir.name, get_state(paths)),
+                )
                 return
 
             if path == "/api/profiles":
@@ -747,8 +780,12 @@ def make_handler(server: WorkflowHTTPServer):
                 if not run_id:
                     _send_json(self, 400, {"error": "missing run_id"})
                     return
+                add_kwargs: dict[str, Any] = {}
+                if "period_year" in payload or "period_month" in payload:
+                    add_kwargs["period_year"] = payload.get("period_year")
+                    add_kwargs["period_month"] = payload.get("period_month")
                 try:
-                    profile = add_bill_from_run(root, profile_id, run_id)
+                    profile = add_bill_from_run(root, profile_id, run_id, **add_kwargs)
                 except FileNotFoundError:
                     _send_json(self, 404, {"error": "profile or run not found"})
                     return
@@ -1071,14 +1108,57 @@ def make_handler(server: WorkflowHTTPServer):
                 if not isinstance(payload, dict):
                     _send_json(self, 400, {"error": "options must be json object"})
                     return
+                legacy_profile_id = None
+                if "profile_id" in payload:
+                    legacy_profile_id = str(payload.get("profile_id") or "").strip()
+                    payload = dict(payload)
+                    payload.pop("profile_id", None)
+                    try:
+                        if legacy_profile_id:
+                            set_run_binding(root, run_id, legacy_profile_id)
+                        else:
+                            clear_run_binding(root, run_id)
+                    except FileNotFoundError:
+                        _send_json(self, 404, {"error": "run or profile not found"})
+                        return
+                    except Exception as exc:
+                        _send_json(self, 400, {"error": str(exc)})
+                        return
                 paths = make_paths(root, run_id)
                 state = get_state(paths)
-                state.setdefault("options", {}).update(payload)
+                options = state.setdefault("options", {})
+                if not isinstance(options, dict):
+                    options = {}
+                    state["options"] = options
+                options.update(payload)
+                options.pop("profile_id", None)
                 save_state(paths, state)
                 server.logger.bind(run_id=run_id, stage_id="-").info(
-                    f"已更新 options: {payload}"
+                    f"已更新 options: {payload}" + (f", profile_binding={legacy_profile_id or '<cleared>'}" if legacy_profile_id is not None else "")
                 )
                 _send_json(self, 200, {"ok": True})
+                return
+
+            m = re.fullmatch(r"/api/runs/(?P<run_id>[^/]+)/profile-binding", path)
+            if m:
+                run_id = m.group("run_id")
+                payload = _parse_json(self)
+                if not isinstance(payload, dict):
+                    _send_json(self, 400, {"error": "payload must be json object"})
+                    return
+                profile_id = str(payload.get("profile_id") or "").strip()
+                if not profile_id:
+                    _send_json(self, 400, {"error": "missing profile_id"})
+                    return
+                try:
+                    binding = set_run_binding(root, run_id, profile_id)
+                except FileNotFoundError:
+                    _send_json(self, 404, {"error": "run or profile not found"})
+                    return
+                except Exception as exc:
+                    _send_json(self, 400, {"error": str(exc)})
+                    return
+                _send_json(self, 200, {"ok": True, "binding": binding})
                 return
 
             m = re.fullmatch(r"/api/profiles/(?P<profile_id>[^/]+)", path)

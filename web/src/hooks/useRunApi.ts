@@ -326,18 +326,59 @@ export function useRunApi(deps: RunApiDeps) {
     async function saveOptions(updates: Partial<NonNullable<RunState["options"]>>) {
         if (!runId) return;
         lastOptionEdit.current = Date.now();
+        const nextUpdates = { ...(updates as Record<string, unknown>) };
+        delete nextUpdates.profile_id;
+        if (!Object.keys(nextUpdates).length) return;
         // 乐观更新
-        setState((prev) => (prev ? { ...prev, options: { ...prev.options, ...updates } } : prev));
+        setState((prev) => (prev ? { ...prev, options: { ...prev.options, ...nextUpdates } } : prev));
         setBusy(true);
         setError("");
         try {
             await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/options`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(updates),
+                body: JSON.stringify(nextUpdates),
             });
         } catch (e) {
             setError(String(e));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function setRunProfileBinding(profileId: string) {
+        if (!runId) return;
+        const profile_id = String(profileId || "").trim();
+        if (!profile_id) {
+            throw new Error("缺少 profile_id");
+        }
+        const optimisticTs = new Date().toISOString();
+        setState((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                profile_binding: {
+                    run_id: runId,
+                    profile_id,
+                    updated_at: optimisticTs,
+                },
+            };
+        });
+        setBusy(true);
+        setError("");
+        try {
+            await api<{ ok: boolean; binding: unknown }>(
+                baseUrl,
+                `/api/runs/${encodeURIComponent(runId)}/profile-binding`,
+                {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ profile_id }),
+                },
+            );
+        } catch (e) {
+            setError(String(e));
+            throw e;
         } finally {
             setBusy(false);
         }
@@ -411,6 +452,7 @@ export function useRunApi(deps: RunApiDeps) {
         saveConfig,
         saveConfigObject,
         saveOptions,
+        setRunProfileBinding,
         runStatus,
     };
 }
