@@ -3,7 +3,7 @@
 输入：
 - `unified.with_id.csv`（来自 `classify` 阶段）
 - `review.csv`（人工审核/编辑）
-- 分类器配置（`config/classifier.json` 或 `config/classifier.local.json`）
+- 分类器配置（`config/classifier.local.json` 或 `config/classifier.sample.json`）
 
 输出：
 - `<out-dir>/unified.transactions.categorized.csv`
@@ -34,7 +34,7 @@ def default_classifier_config_path() -> Path:
     local = Path("config/classifier.local.json")
     if local.exists():
         return local
-    return Path("config/classifier.json")
+    return Path("config/classifier.sample.json")
 
 
 def _parse_bool(value: object) -> bool:
@@ -178,6 +178,82 @@ def _auto_ignore_wallet_duplicates(merged: pd.DataFrame) -> tuple[pd.DataFrame, 
             dropped += 1
 
     return merged, dropped
+
+
+def _auto_ignore_shadow_wallet_duplicates(merged: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    required_cols = [
+        "trade_date",
+        "trade_time",
+        "amount",
+        "merchant",
+        "item",
+        "primary_source",
+        "sources",
+        "match_status",
+        "match_group_id",
+        "remark",
+        "ignored",
+        "ignore_reason",
+    ]
+    if any(col not in merged.columns for col in required_cols):
+        return merged, 0
+
+    grouped: dict[tuple[str, str, str, str, str], list[int]] = {}
+    for idx, row in merged.iterrows():
+        key = (
+            str(row.get("trade_date", "")).strip(),
+            str(row.get("trade_time", "")).strip(),
+            _normalized_amount_key(row.get("amount", "")),
+            str(row.get("merchant", "")).strip(),
+            str(row.get("item", "")).strip(),
+        )
+        grouped.setdefault(key, []).append(idx)
+
+    ignored_count = 0
+    for _, indices in grouped.items():
+        if len(indices) <= 1:
+            continue
+
+        bill_side_indices: list[int] = []
+        wallet_side_indices: list[int] = []
+        for idx in indices:
+            source = str(merged.at[idx, "primary_source"]).strip()
+            sources = str(merged.at[idx, "sources"]).strip()
+            match_status = str(merged.at[idx, "match_status"]).strip()
+            if source in WALLET_PRIMARY_SOURCES:
+                if sources == source:
+                    wallet_side_indices.append(idx)
+                continue
+            if match_status == "matched" and any(
+                wallet_source in sources for wallet_source in WALLET_PRIMARY_SOURCES
+            ):
+                bill_side_indices.append(idx)
+
+        if not bill_side_indices or not wallet_side_indices:
+            continue
+
+        # 一笔账单匹配行最多吞掉一条同签名钱包影子行，防止同日同额真实多笔被误杀。
+        quota = len(bill_side_indices)
+        ranked_wallet_indices = sorted(
+            wallet_side_indices,
+            key=lambda i: (
+                "匹配到账单" in str(merged.at[i, "remark"]),
+                str(merged.at[i, "match_group_id"] or "").strip() != "",
+                -i,
+            ),
+            reverse=True,
+        )
+        for idx in ranked_wallet_indices:
+            if quota <= 0:
+                break
+            if _parse_bool(merged.at[idx, "ignored"]):
+                continue
+            merged.at[idx, "ignored"] = "true"
+            merged.at[idx, "ignore_reason"] = "自动去重：钱包明细已并入账单匹配行（影子重复）"
+            ignored_count += 1
+            quota -= 1
+
+    return merged, ignored_count
 
 
 def _normalize_flow_value(flow: object, category_id: object, amount: object) -> str:
@@ -390,6 +466,9 @@ def finalize(
     merged, auto_dropped = _auto_ignore_wallet_duplicates(merged)
     if auto_dropped:
         log("finalize", f"自动去重：match_group 钱包重复项={auto_dropped}")
+    merged, shadow_dropped = _auto_ignore_shadow_wallet_duplicates(merged)
+    if shadow_dropped:
+        log("finalize", f"自动去重：影子钱包重复项={shadow_dropped}")
 
     merged, flow_changed = _normalize_flows(merged)
     if flow_changed:
@@ -472,7 +551,7 @@ def main() -> None:
         "--config",
         type=Path,
         default=default_classifier_config_path(),
-        help="分类器配置路径（默认：优先使用 config/classifier.local.json）。",
+        help="分类器配置路径（默认：优先 config/classifier.local.json，再回退 config/classifier.sample.json）。",
     )
     parser.add_argument("--unified-with-id", type=Path, default=Path("output/classify/unified.with_id.csv"))
     parser.add_argument("--review", type=Path, default=Path("output/classify/review.csv"))

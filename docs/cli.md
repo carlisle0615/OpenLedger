@@ -19,7 +19,7 @@ uv run python -m stages.finalize
 
 - 上述命令默认读写 `output/`；适合本地快速实验。
 - 在正式流程中，后端会把每次任务隔离到 `runs/<run_id>/` 下执行。
-- 分类阶段默认优先读取 `config/classifier.local.json`，不存在则回退 `config/classifier.json`。
+- 分类阶段默认优先读取 `config/classifier.local.json`，不存在则回退 `config/classifier.sample.json`。
 
 ## PDF 解析模式
 
@@ -28,7 +28,7 @@ uv run python -m stages.finalize
 
 ## 分类阶段（LLM）
 
-- 分类规则默认在 `config/classifier.json`
+- 分类规则样本在 `config/classifier.sample.json`
 - 推荐本地覆盖 `config/classifier.local.json`（避免误提交）
 - `lsp` 字段说明见 `docs/lsp.md`
 - 首次使用 LSP：在仓库根目录执行 `pnpm install` 安装依赖

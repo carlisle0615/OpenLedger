@@ -534,6 +534,8 @@ class WorkflowRunner:
                 str(paths.out_dir / "alipay.normalized.csv"),
                 "--out-dir",
                 str(paths.out_dir),
+                "--classifier-config",
+                str(paths.config_dir / "classifier.json"),
             ]
             cmd.extend([str(p) for p in bank_csvs])
             st_logger.info(f"日志文件: {log_path}")

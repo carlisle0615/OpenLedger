@@ -4,10 +4,9 @@
 
 ## 配置入口
 
-默认配置位于 `config/classifier.json` 的 `lsp` 字段。你可以用本地覆盖：
+默认样本位于 `config/classifier.sample.json` 的 `lsp` 字段。你可以用本地覆盖：
 
 - `config/classifier.local.json`：本机私有覆盖（已被 gitignore）
-- `config/classifier.private.json`：你的私有模板/备份（已被 gitignore）
 
 ## Provider 列表
 

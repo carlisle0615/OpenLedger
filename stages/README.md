@@ -69,7 +69,7 @@ uv run python -m stages.finalize --config "$RUN/config/classifier.json" --unifie
 
 ### LSP Provider（分类阶段）
 
-`classify_llm.mjs` 通过 `config/classifier.json` 的 `lsp` 字段选择 Provider。更多细节见 `docs/lsp.md`。
+`classify_llm.mjs` 通过 `config/classifier.sample.json` / `config/classifier.local.json` 的 `lsp` 字段选择 Provider。更多细节见 `docs/lsp.md`。
 首次使用前，请在仓库根目录执行 `pnpm install` 安装 LangChain 依赖。
 
 ## Tools（开发/维护）

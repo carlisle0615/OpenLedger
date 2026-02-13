@@ -62,14 +62,11 @@ type ClassifierConfigShape = {
     categories?: Category[];
     ignore_rules?: IgnoreRule[];
     regex_category_rules?: RegexCategoryRule[];
+    debit_card_aliases?: Record<string, string[]>;
     prompt_columns?: string[];
     review_columns?: string[];
     drop_output_columns?: string[];
     [key: string]: unknown;
-};
-
-type CardAliasConfig = {
-    debit_card_aliases: Record<string, string[]>;
 };
 
 type CardAliasRow = {
@@ -210,6 +207,7 @@ function normalizeConfig(raw: unknown): ClassifierConfigShape {
         categories: asCategoryArray(raw.categories),
         ignore_rules: asIgnoreRules(raw.ignore_rules),
         regex_category_rules: asRegexRules(raw.regex_category_rules),
+        debit_card_aliases: normalizeDebitCardAliases(raw.debit_card_aliases),
         prompt_columns: asStringArray(raw.prompt_columns),
         review_columns: asStringArray(raw.review_columns),
         drop_output_columns: asStringArray(raw.drop_output_columns),
@@ -255,13 +253,12 @@ function validateConfig(config: ClassifierConfigShape): string | null {
     return null;
 }
 
-function normalizeCardAliasConfig(raw: unknown): CardAliasConfig {
+function normalizeDebitCardAliases(raw: unknown): Record<string, string[]> {
     if (!isObject(raw)) {
-        return { debit_card_aliases: {} };
+        return {};
     }
-    const nested = isObject(raw.debit_card_aliases) ? raw.debit_card_aliases : raw;
     const out: Record<string, string[]> = {};
-    Object.entries(nested).forEach(([k, v]) => {
+    Object.entries(raw).forEach(([k, v]) => {
         const key = asString(k).trim();
         if (!/^\d{4}$/.test(key)) return;
         const values = Array.isArray(v) ? v : [v];
@@ -271,11 +268,11 @@ function normalizeCardAliasConfig(raw: unknown): CardAliasConfig {
         if (!aliases.length) return;
         out[key] = Array.from(new Set(aliases));
     });
-    return { debit_card_aliases: out };
+    return out;
 }
 
-function aliasesToRows(config: CardAliasConfig): CardAliasRow[] {
-    return Object.entries(config.debit_card_aliases)
+function aliasesToRows(aliases: Record<string, string[]>): CardAliasRow[] {
+    return Object.entries(aliases)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([primary, aliases]) => ({
             primary,
@@ -283,7 +280,7 @@ function aliasesToRows(config: CardAliasConfig): CardAliasRow[] {
         }));
 }
 
-function rowsToAliasConfig(rows: CardAliasRow[]): CardAliasConfig {
+function rowsToAliasMap(rows: CardAliasRow[]): Record<string, string[]> {
     const out: Record<string, string[]> = {};
     rows.forEach((row) => {
         const primary = row.primary.trim();
@@ -303,7 +300,7 @@ function rowsToAliasConfig(rows: CardAliasRow[]): CardAliasConfig {
         }
         out[primary] = normalized;
     });
-    return { debit_card_aliases: out };
+    return out;
 }
 
 function TextListEditor(props: {
@@ -372,9 +369,7 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
     const [config, setConfig] = React.useState<ClassifierConfigShape | null>(null);
     const [cardAliasRows, setCardAliasRows] = React.useState<CardAliasRow[]>([]);
     const [loading, setLoading] = React.useState(false);
-    const [aliasLoading, setAliasLoading] = React.useState(false);
     const [saving, setSaving] = React.useState(false);
-    const [aliasSaving, setAliasSaving] = React.useState(false);
     const [error, setError] = React.useState("");
     const [success, setSuccess] = React.useState("");
     const [loadedAt, setLoadedAt] = React.useState("");
@@ -401,18 +396,13 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
     const loadConfig = React.useCallback(async () => {
         if (!baseUrl.trim()) return;
         setLoading(true);
-        setAliasLoading(true);
         setError("");
         setSuccess("");
         try {
-            const [rawClassifier, rawAliases] = await Promise.all([
-                api<unknown>(baseUrl, "/api/config/classifier"),
-                api<unknown>(baseUrl, "/api/config/card-aliases").catch(() => ({ debit_card_aliases: {} })),
-            ]);
+            const rawClassifier = await api<unknown>(baseUrl, "/api/config/classifier");
             const normalized = normalizeConfig(rawClassifier);
-            const aliasConfig = normalizeCardAliasConfig(rawAliases);
             setConfig(normalized);
-            setCardAliasRows(aliasesToRows(aliasConfig));
+            setCardAliasRows(aliasesToRows(normalized.debit_card_aliases || {}));
             setJsonText(JSON.stringify(normalized, null, 2));
             setLoadedAt(new Date().toLocaleString());
         } catch (e) {
@@ -421,7 +411,6 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
             setCardAliasRows([]);
         } finally {
             setLoading(false);
-            setAliasLoading(false);
         }
     }, [baseUrl]);
 
@@ -518,9 +507,21 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
         updateConfig({ regex_category_rules: regexRules.filter((_, i) => i !== index) });
     }
 
+    function configWithAliases(base: ClassifierConfigShape): ClassifierConfigShape {
+        return {
+            ...base,
+            debit_card_aliases: rowsToAliasMap(cardAliasRows),
+        };
+    }
+
     function syncJsonFromUi() {
         if (!config) return;
-        setJsonText(JSON.stringify(config, null, 2));
+        try {
+            setJsonText(JSON.stringify(configWithAliases(config), null, 2));
+        } catch (e) {
+            setError(String(e));
+            return;
+        }
         setError("");
         setSuccess("已将可视化配置同步到 JSON。")
     }
@@ -532,6 +533,7 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
             const parsed = JSON.parse(jsonText) as unknown;
             const normalized = normalizeConfig(parsed);
             setConfig(normalized);
+            setCardAliasRows(aliasesToRows(normalized.debit_card_aliases || {}));
             setSuccess("已将 JSON 应用到可视化配置。")
         } catch (e) {
             setError(String(e));
@@ -551,12 +553,14 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
         setError("");
         setSuccess("");
         try {
+            const payload = configWithAliases(config);
             await api<{ ok: boolean }>(baseUrl, "/api/config/classifier", {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(config),
+                body: JSON.stringify(payload),
             });
-            setJsonText(JSON.stringify(config, null, 2));
+            setConfig(payload);
+            setJsonText(JSON.stringify(payload, null, 2));
             setSuccess("全局配置已保存。")
             setLoadedAt(new Date().toLocaleString());
         } catch (e) {
@@ -582,22 +586,27 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
     }
 
     async function saveCardAliases() {
-        setAliasSaving(true);
+        if (!config) return;
+        setSaving(true);
         setError("");
         setSuccess("");
         try {
-            const payload = rowsToAliasConfig(cardAliasRows);
-            await api<{ ok: boolean }>(baseUrl, "/api/config/card-aliases", {
+            const aliasMap = rowsToAliasMap(cardAliasRows);
+            const payload = { ...config, debit_card_aliases: aliasMap };
+            await api<{ ok: boolean }>(baseUrl, "/api/config/classifier", {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
-            setCardAliasRows(aliasesToRows(payload));
+            setConfig(payload);
+            setJsonText(JSON.stringify(payload, null, 2));
+            setCardAliasRows(aliasesToRows(aliasMap));
             setSuccess("续卡映射已保存。")
+            setLoadedAt(new Date().toLocaleString());
         } catch (e) {
             setError(String(e));
         } finally {
-            setAliasSaving(false);
+            setSaving(false);
         }
     }
 
@@ -792,10 +801,10 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <Button size="sm" variant="outline" className="h-7 px-2" onClick={addCardAliasRow} disabled={aliasLoading || aliasSaving}>
+                                <Button size="sm" variant="outline" className="h-7 px-2" onClick={addCardAliasRow} disabled={loading || saving}>
                                     <Plus className="h-3.5 w-3.5 mr-1" />新增映射
                                 </Button>
-                                <Button size="sm" className="h-7 px-2" onClick={() => void saveCardAliases()} disabled={aliasLoading || aliasSaving}>
+                                <Button size="sm" className="h-7 px-2" onClick={() => void saveCardAliases()} disabled={loading || saving}>
                                     <Save className="h-3.5 w-3.5 mr-1" />保存映射
                                 </Button>
                             </div>

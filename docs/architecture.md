@@ -94,7 +94,7 @@ Priority (high -> low):
 
 1. `runs/<run_id>/config/classifier.json` (per-run override)
 2. `config/classifier.local.json` (local global override; gitignored)
-3. `config/classifier.json` (repo default)
+3. `config/classifier.sample.json` (repo default sample)
 
 `lsp` inside classifier config controls provider/model/runtime parameters for LLM classification.
 
@@ -149,7 +149,7 @@ Do not commit:
 
 - `.env` (secrets)
 - bills/exports/derived artifacts (`bills/`, `output/`, `runs/`, `tmp/`)
-- personal classifier overrides (`config/classifier.local.json`, `config/classifier.private.json`)
+- personal classifier overrides (`config/classifier.local.json`)
 - private notes (`private/`)
 
 Refer to `.gitignore` and `README.md` for operational guidance.

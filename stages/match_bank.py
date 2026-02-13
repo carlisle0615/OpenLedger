@@ -164,20 +164,14 @@ def _load_card_aliases(config_path: Path) -> dict[str, list[str]]:
         raise ValueError(f"卡号别名配置 JSON 无法解析: {config_path}") from exc
     if not isinstance(raw_obj, dict):
         raise ValueError(f"卡号别名配置必须是 JSON 对象: {config_path}")
-
-    alias_obj: Mapping[str, Any] | None
-    if "debit_card_aliases" in raw_obj:
-        nested = raw_obj.get("debit_card_aliases")
-        if nested is None:
-            return {}
-        if not isinstance(nested, dict):
-            raise ValueError(
-                f"卡号别名配置字段 debit_card_aliases 必须是对象: {config_path}"
-            )
-        alias_obj = nested
-    else:
-        alias_obj = raw_obj
-    return _normalize_card_aliases(alias_obj)
+    nested = raw_obj.get("debit_card_aliases")
+    if nested is None:
+        return {}
+    if not isinstance(nested, dict):
+        raise ValueError(
+            f"卡号别名配置字段 debit_card_aliases 必须是对象: {config_path}"
+        )
+    return _normalize_card_aliases(nested)
 
 
 def _is_refund_detail(detail_row: pd.Series) -> bool:
@@ -345,17 +339,6 @@ def _best_sum_match(
     return best_combo, best_score
 
 
-def _should_attempt_match(summary: str, counterparty: str) -> bool:
-    s = summary.strip()
-    c = counterparty.strip()
-    keywords = ["快捷支付", "银联快捷支付", "快捷退款", "银联快捷退款", "支付宝", "财付通", "微信"]
-    if any(k in s for k in keywords) or any(k in c for k in ["支付宝", "财付通", "微信"]):
-        return True
-    # 工资/薪资等入账需要纳入记账，不应被 skipped_non_payment 直接忽略。
-    income_keywords = ["代发工资", "工资", "薪资", "薪金", "奖金", "补贴", "报销"]
-    return any(k in s for k in income_keywords) or any(k in c for k in income_keywords)
-
-
 def match_bank_statements(
     bank_csvs: list[Path],
     wechat_csv: Path,
@@ -442,12 +425,6 @@ def match_bank_statements(
             if not account_last4:
                 unmatched_rows.append({**base, "match_status": "missing_account_last4"})
                 debug["match_status"] = "missing_account_last4"
-                debug_rows.append(debug)
-                continue
-
-            if not _should_attempt_match(summary, counterparty):
-                unmatched_rows.append({**base, "match_status": "skipped_non_payment"})
-                debug["match_status"] = "skipped_non_payment"
                 debug_rows.append(debug)
                 continue
 
@@ -715,12 +692,12 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=Path("output"), help="输出目录。")
     parser.add_argument("--max-day-diff", type=int, default=1)
     parser.add_argument(
-        "--card-alias-map",
+        "--classifier-config",
         type=Path,
-        default=Path("config/card_aliases.local.json"),
+        default=Path("config/classifier.local.json"),
         help=(
-            "借记卡尾号别名配置 JSON；默认读取 config/card_aliases.local.json。"
-            "示例：{\"debit_card_aliases\":{\"1234\":[\"5678\"]}}"
+            "分类器配置 JSON（读取 debit_card_aliases）。"
+            "默认优先 config/classifier.local.json，不存在时回退 sample/legacy。"
         ),
     )
     parser.add_argument("bank_csv", type=Path, nargs="*")
@@ -748,9 +725,15 @@ def main() -> None:
             "或手动把 bank 类型的 *.transactions.csv 作为参数传入。"
         )
 
-    card_aliases = _load_card_aliases(args.card_alias_map)
+    classifier_config = args.classifier_config
+    if not classifier_config.exists():
+        sample_cfg = Path("config/classifier.sample.json")
+        if sample_cfg.exists():
+            classifier_config = sample_cfg
+
+    card_aliases = _load_card_aliases(classifier_config)
     if card_aliases:
-        log("match_bank", f"已加载借记卡别名映射: {len(card_aliases)} 组（{args.card_alias_map}）")
+        log("match_bank", f"已加载借记卡别名映射: {len(card_aliases)} 组（{classifier_config}）")
 
     match_bank_statements(
         bank_csvs=bank_csvs,

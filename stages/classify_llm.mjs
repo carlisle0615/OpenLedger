@@ -9,7 +9,7 @@ import { buildLspModel, resolveLspConfig, validateLspConfig } from "./lsp/index.
  *
  * 输入：
  * - `--input`：统一抽象输出（通常是 `output/unified.transactions.csv` 或 `runs/<run_id>/output/unified.transactions.csv`）
- * - `--config`：分类器配置（优先 `config/classifier.local.json`，否则 `config/classifier.json`）
+ * - `--config`：分类器配置（优先 `config/classifier.local.json`，否则 `config/classifier.sample.json`）
  *
  * 输出（在 `--out-dir` 下）：
  * - `unified.with_id.csv`：为每条交易生成稳定的 txn_id
@@ -18,13 +18,13 @@ import { buildLspModel, resolveLspConfig, validateLspConfig } from "./lsp/index.
  * - `batches/batch_*.json`：LLM 批次审计（raw output、usage 等）
  */
 
-const DEFAULT_PUBLIC_CONFIG = "config/classifier.json";
+const DEFAULT_SAMPLE_CONFIG = "config/classifier.sample.json";
 const DEFAULT_LOCAL_CONFIG = "config/classifier.local.json";
 
 function defaultClassifierConfigPath() {
-  // 优先使用本地覆盖配置（已被 gitignore），用于个人调参；否则使用仓库内的公共默认配置。
+  // 优先使用本地覆盖配置（已被 gitignore），用于个人调参；否则使用仓库样本配置。
   if (fs.existsSync(DEFAULT_LOCAL_CONFIG)) return DEFAULT_LOCAL_CONFIG;
-  return DEFAULT_PUBLIC_CONFIG;
+  return DEFAULT_SAMPLE_CONFIG;
 }
 
 function parseArgs(argv) {

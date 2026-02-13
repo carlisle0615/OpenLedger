@@ -17,25 +17,19 @@
     {
       "id": "ignore_company_pay",
       "reason": "因公付不记账（示例规则，可按需删除）",
-      "fields": ["pay_method"],
+      "fields": [
+        "pay_method"
+      ],
       "pattern": "因公付",
       "flags": "i"
     },
     {
       "id": "ignore_repayment",
       "reason": "还款不记账（示例规则，可按需调整）",
-      "fields": ["merchant"],
+      "fields": [
+        "merchant"
+      ],
       "pattern": "还款",
-      "flags": "i"
-    },
-    {
-      "id": "ignore_skipped_non_payment",
-      "reason": "银行流水非支付/理财等不记账（skipped_non_payment）",
-      "when": {
-        "primary_source": "^cmb_statement$"
-      },
-      "fields": ["remark"],
-      "pattern": "skipped_non_payment",
       "flags": "i"
     },
     {
@@ -45,7 +39,12 @@
       "when": {
         "primary_source": "^cmb_statement$"
       },
-      "fields": ["flow", "merchant", "category", "remark"],
+      "fields": [
+        "flow",
+        "merchant",
+        "category",
+        "remark"
+      ],
       "pattern": "基金|理财|朝朝宝|赎回|申购",
       "flags": ""
     }
@@ -56,7 +55,9 @@
       "category_id": "refund",
       "confidence": 0.98,
       "uncertain": false,
-      "fields": ["flow"],
+      "fields": [
+        "flow"
+      ],
       "pattern": "^refund$",
       "flags": "i"
     },
@@ -65,7 +66,9 @@
       "category_id": "red_packet_transfer",
       "confidence": 0.98,
       "uncertain": false,
-      "fields": ["flow"],
+      "fields": [
+        "flow"
+      ],
       "pattern": "^transfer$",
       "flags": "i"
     },
@@ -74,7 +77,9 @@
       "category_id": "dining",
       "confidence": 0.9,
       "uncertain": false,
-      "fields": ["category"],
+      "fields": [
+        "category"
+      ],
       "pattern": "餐饮美食|餐饮|美食|外卖",
       "flags": ""
     },
@@ -83,7 +88,11 @@
       "category_id": "taxi",
       "confidence": 0.9,
       "uncertain": false,
-      "fields": ["merchant", "item", "category"],
+      "fields": [
+        "merchant",
+        "item",
+        "category"
+      ],
       "pattern": "滴滴|didichuxing",
       "flags": "i"
     }
@@ -225,5 +234,6 @@
     "sources",
     "remark"
   ],
-  "drop_output_columns": []
+  "drop_output_columns": [],
+  "debit_card_aliases": {}
 }

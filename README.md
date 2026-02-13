@@ -110,7 +110,7 @@ UI 支持：
 
 - 上传文件、查看 stage 产物与日志
 - 设置 `pdf_mode` / 账期 / 分类模式
-- 编辑 `classifier.json`
+- 编辑 `runs/<run_id>/config/classifier.json`
 - 审核 `review.csv` 并生成最终结果
 - CSV/XLSX 表格预览与 PDF 缩略图预览（减少频繁下载）
 - 用户页二级菜单：
@@ -171,7 +171,6 @@ uv run python -m tools.scaffold_pdf_parser --mode-id boc --mode-name "中国银�
 - `.env`（密钥）
 - `bills/`、`output/`、`runs/`、`tmp/`（账单与产物）
 - `config/classifier.local.json`（个人规则）
-- `config/classifier.private.json`（个人 LSP 配置示例，不提交）
 
 ## 贡献
 

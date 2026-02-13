@@ -231,23 +231,31 @@ def _match_group_id_from_bill(seed: str) -> str:
 def _detail_group_id(row: pd.Series, detail_to_group_map: dict[str, str]) -> str:
     if not detail_to_group_map:
         return ""
-    ids = _dedup([_clean_str(row.get("trade_no")), _clean_str(row.get("merchant_no"))])
-    if not ids:
-        return ""
-    groups = _dedup([detail_to_group_map.get(k, "") for k in ids])
-    groups = [g for g in groups if g]
-    if not groups:
-        return ""
-    return sorted(groups)[0]
+    trade_no = _clean_str(row.get("trade_no"))
+    merchant_no = _clean_str(row.get("merchant_no"))
+    # trade_no 通常是单笔交易唯一标识；merchant_no 可能被商户长期复用。
+    # 优先按 trade_no 找分组，避免因 merchant_no 复用导致跨月错误归组。
+    if trade_no:
+        group_id = _clean_str(detail_to_group_map.get(trade_no, ""))
+        if group_id:
+            return group_id
+    if merchant_no:
+        group_id = _clean_str(detail_to_group_map.get(merchant_no, ""))
+        if group_id:
+            return group_id
+    return ""
 
 
 def _detail_match_remark(row: pd.Series, detail_to_bill_map: dict[str, list[str]]) -> str:
     if not detail_to_bill_map:
         return ""
-    ids = _dedup([_clean_str(row.get("trade_no")), _clean_str(row.get("merchant_no"))])
-    if not ids:
-        return ""
-    bills = _dedup(sum([detail_to_bill_map.get(k, []) for k in ids], []))
+    trade_no = _clean_str(row.get("trade_no"))
+    merchant_no = _clean_str(row.get("merchant_no"))
+    bills: list[str] = []
+    if trade_no:
+        bills = _dedup(detail_to_bill_map.get(trade_no, []))
+    if not bills and merchant_no:
+        bills = _dedup(detail_to_bill_map.get(merchant_no, []))
     if not bills:
         return ""
     return f"匹配到账单：{_join_refs(bills)}"
@@ -712,18 +720,14 @@ def _bank_rows(
 
     def flow(row: pd.Series) -> str:
         summary = str(row.get("summary", "")).strip()
-        counterparty = str(row.get("counterparty", "")).strip()
-        text = f"{summary} {counterparty}".strip()
         amt: Decimal = row["amount_dec"]
         if "退款" in summary and amt > 0:
             return "refund"
-        if amt > 0 and any(k in text for k in ["代发工资", "工资", "薪资", "薪金", "奖金", "补贴", "报销", "津贴"]):
+        if amt > 0:
             return "income"
-        if "支付" in summary and amt < 0:
+        if amt < 0:
             return "expense"
-        if "转账" in summary or "转入" in summary or "转出" in summary:
-            return "transfer"
-        return summary or "other"
+        return "other"
 
     bank["flow"] = bank.apply(flow, axis=1)
 
@@ -838,7 +842,11 @@ def build_unified(
     detail_to_group = _build_detail_to_group_map(cc_enriched, bank_enriched)
 
     cc_out = _credit_card_rows(cc_enriched, cc_unmatched, detail_lookup)
-    bank_out = _bank_rows(bank_enriched, bank_unmatched, detail_lookup)
+    bank_out = _bank_rows(
+        bank_enriched,
+        bank_unmatched,
+        detail_lookup,
+    )
     wallet_out = pd.concat(
         [
             _wechat_wallet_rows(wechat_norm, detail_to_bill, detail_to_group),

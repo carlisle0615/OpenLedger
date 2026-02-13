@@ -11,7 +11,7 @@ This checklist is for preparing the repository for public open source release.
 - [ ] Add contribution docs (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`).
 - [ ] Add CI to prevent obvious breakage (`.github/workflows/ci.yml`).
 - [ ] Provide safe defaults:
-  - Public template: `config/classifier.json`
+  - Public template: `config/classifier.sample.json`
   - Local override (ignored): `config/classifier.local.json`
   - Secrets template: `.env.example` (keep `.env` ignored)
 
@@ -38,4 +38,3 @@ Tools:
 
 Note: If the repo was already public, assume the secret is compromised even
 after rewriting history.
-
