@@ -53,7 +53,7 @@ export function ProfileReviewTab({
     selectedProfileName,
     active,
 }: ProfileReviewTabProps) {
-    const [timeRange, setTimeRange] = useState<string>("last_12");
+    const [timeRange, setTimeRange] = useState<string>("all_time");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [data, setData] = useState<ProfileReviewResponse | null>(null);

@@ -69,7 +69,6 @@ def _init_db(conn: sqlite3.Connection) -> None:
         )
         """
     )
-    _migrate_bills_drop_cached_columns(conn)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS run_bindings (
@@ -87,54 +86,6 @@ def _init_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_run_bindings_profile ON run_bindings(profile_id)"
     )
-
-
-def _migrate_bills_drop_cached_columns(conn: sqlite3.Connection) -> None:
-    rows = conn.execute("PRAGMA table_info(bills)").fetchall()
-    if not rows:
-        return
-    columns = {str(row["name"]) for row in rows}
-    if "totals_json" not in columns and "category_summary_json" not in columns:
-        return
-
-    conn.execute("DROP TABLE IF EXISTS bills_new")
-    conn.execute(
-        """
-        CREATE TABLE bills_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            profile_id TEXT NOT NULL,
-            run_id TEXT NOT NULL,
-            period_key TEXT,
-            year INTEGER,
-            month INTEGER,
-            period_mode TEXT,
-            period_day INTEGER,
-            period_start TEXT,
-            period_end TEXT,
-            period_label TEXT,
-            cross_month INTEGER,
-            created_at TEXT,
-            updated_at TEXT,
-            outputs_json TEXT,
-            UNIQUE(profile_id, run_id),
-            FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-        )
-        """
-    )
-    conn.execute(
-        """
-        INSERT INTO bills_new(
-            id, profile_id, run_id, period_key, year, month, period_mode, period_day,
-            period_start, period_end, period_label, cross_month, created_at, updated_at, outputs_json
-        )
-        SELECT
-            id, profile_id, run_id, period_key, year, month, period_mode, period_day,
-            period_start, period_end, period_label, cross_month, created_at, updated_at, outputs_json
-        FROM bills
-        """
-    )
-    conn.execute("DROP TABLE bills")
-    conn.execute("ALTER TABLE bills_new RENAME TO bills")
 
 
 def _slugify(value: str) -> str:
