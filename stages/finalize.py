@@ -27,6 +27,7 @@ from ._common import log, make_parser
 REVIEW_REQUIRED_COLUMNS = set(required_columns(ART_REVIEW))
 UNIFIED_WITH_ID_REQUIRED_COLUMNS = set(required_columns(ART_UNIFIED_WITH_ID))
 WALLET_PRIMARY_SOURCES = {"wechat", "alipay"}
+NORMALIZED_FLOWS = {"expense", "income", "refund", "transfer", "other", "repayment", "rebate"}
 
 
 def default_classifier_config_path() -> Path:
@@ -58,6 +59,53 @@ def _normalized_amount_key(value: object) -> str:
         return str(Decimal(s).quantize(Decimal("0.01")))
     except (InvalidOperation, ValueError):
         return s
+
+
+def _row_richness_score(row: pd.Series) -> int:
+    score_cols = [
+        "item",
+        "category",
+        "pay_method",
+        "remark",
+        "match_status",
+        "match_group_id",
+    ]
+    score = 0
+    for col in score_cols:
+        if str(row.get(col, "")).strip():
+            score += 1
+    return score
+
+
+def _dedupe_unified_rows(unified: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if "txn_id" not in unified.columns:
+        return unified, 0
+    duplicated = unified["txn_id"].duplicated(keep=False)
+    if not bool(duplicated.any()):
+        return unified, 0
+
+    dedup = unified.copy()
+    dedup["_orig_idx"] = range(len(dedup))
+    dedup["_row_score"] = dedup.apply(_row_richness_score, axis=1)
+    dedup = dedup.sort_values(
+        by=["txn_id", "_row_score", "_orig_idx"],
+        ascending=[True, False, True],
+        kind="stable",
+    )
+    dedup = dedup.drop_duplicates(subset=["txn_id"], keep="first")
+    dropped = len(unified) - len(dedup)
+    dedup = dedup.sort_values(by="_orig_idx", kind="stable").drop(columns=["_orig_idx", "_row_score"])
+    return dedup, dropped
+
+
+def _dedupe_review_rows(review: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if "txn_id" not in review.columns:
+        return review, 0
+    duplicated = review["txn_id"].duplicated(keep="last")
+    dropped = int(duplicated.sum())
+    if dropped <= 0:
+        return review, 0
+    return review.loc[~duplicated].copy(), dropped
 
 
 def _auto_ignore_wallet_duplicates(merged: pd.DataFrame) -> tuple[pd.DataFrame, int]:
@@ -132,6 +180,71 @@ def _auto_ignore_wallet_duplicates(merged: pd.DataFrame) -> tuple[pd.DataFrame, 
     return merged, dropped
 
 
+def _normalize_flow_value(flow: object, category_id: object, amount: object) -> str:
+    raw_flow = str(flow or "").strip()
+    if raw_flow in NORMALIZED_FLOWS:
+        return raw_flow
+
+    category = str(category_id or "").strip()
+    if category == "refund":
+        return "refund"
+
+    amount_key = _normalized_amount_key(amount)
+    if amount_key:
+        try:
+            amount_dec = Decimal(amount_key)
+            if amount_dec > 0:
+                return "income"
+            if amount_dec < 0:
+                return "expense"
+        except (InvalidOperation, ValueError):
+            pass
+    return "other"
+
+
+def _normalize_flows(merged: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if "flow" not in merged.columns:
+        return merged, 0
+    if "category_id" not in merged.columns:
+        merged["category_id"] = ""
+    if "amount" not in merged.columns:
+        merged["amount"] = ""
+
+    norm = merged.apply(
+        lambda row: _normalize_flow_value(
+            row.get("flow", ""),
+            row.get("category_id", ""),
+            row.get("amount", ""),
+        ),
+        axis=1,
+    )
+    changed = int((norm != merged["flow"].astype(str)).sum())
+    merged["flow"] = norm
+    return merged, changed
+
+
+def _auto_ignore_missing_amount(merged: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    if "amount" not in merged.columns:
+        return merged, 0
+    if "ignored" not in merged.columns:
+        return merged, 0
+    if "ignore_reason" not in merged.columns:
+        merged["ignore_reason"] = ""
+
+    ignored_bool = merged["ignored"].map(_parse_bool)
+    amount_num = pd.to_numeric(merged["amount"], errors="coerce")
+    missing_mask = amount_num.isna() & (~ignored_bool)
+    dropped = int(missing_mask.sum())
+    if dropped <= 0:
+        return merged, 0
+
+    merged.loc[missing_mask, "ignored"] = "true"
+    current_reason = merged.loc[missing_mask, "ignore_reason"].astype(str).str.strip()
+    fill_mask = current_reason == ""
+    merged.loc[current_reason[fill_mask].index, "ignore_reason"] = "自动忽略：金额缺失"
+    return merged, dropped
+
+
 def finalize(
     config_path: Path,
     unified_with_id_csv: Path,
@@ -158,6 +271,14 @@ def finalize(
     missing = sorted(REVIEW_REQUIRED_COLUMNS - set(review.columns))
     if missing:
         raise SystemExit(f"review.csv 缺少列: {missing}")
+
+    unified, unified_dropped = _dedupe_unified_rows(unified)
+    if unified_dropped:
+        log("finalize", f"自动去重：unified 同 txn_id 重复行={unified_dropped}")
+
+    review, review_dropped = _dedupe_review_rows(review)
+    if review_dropped:
+        log("finalize", f"自动去重：review 同 txn_id 重复行={review_dropped}")
 
     review["suggested_uncertain_bool"] = review["suggested_uncertain"].map(_parse_bool)
     review["final_category_id"] = review["final_category_id"].astype(str).str.strip()
@@ -269,6 +390,14 @@ def finalize(
     merged, auto_dropped = _auto_ignore_wallet_duplicates(merged)
     if auto_dropped:
         log("finalize", f"自动去重：match_group 钱包重复项={auto_dropped}")
+
+    merged, flow_changed = _normalize_flows(merged)
+    if flow_changed:
+        log("finalize", f"flow 归一化行数={flow_changed}")
+
+    merged, missing_amount_ignored = _auto_ignore_missing_amount(merged)
+    if missing_amount_ignored:
+        log("finalize", f"自动忽略：金额缺失行={missing_amount_ignored}")
 
     # 删列（来自命令行 + 配置）。
     drop_from_config = [c for c in config.get("drop_output_columns", []) if isinstance(c, str)]

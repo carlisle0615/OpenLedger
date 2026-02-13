@@ -13,6 +13,19 @@ except Exception:  # pragma: no cover - 测试环境可能缺少 httpx
     TestClient = None
 
 
+def _split_amount(total: float, parts: int) -> list[float]:
+    if parts <= 0:
+        return []
+    cents = int(round(abs(total) * 100))
+    base = cents // parts
+    remainder = cents % parts
+    values: list[float] = []
+    for idx in range(parts):
+        piece = base + (1 if idx < remainder else 0)
+        values.append(piece / 100.0)
+    return values
+
+
 def _write_run(
     root: Path,
     run_id: str,
@@ -39,6 +52,9 @@ def _write_run(
     summary_lines = [
         "category_id,category_name,count,sum_amount,sum_expense,sum_income,sum_refund,sum_transfer"
     ]
+    categorized_lines = ["txn_id,trade_date,amount,category_id,category_name,ignored,flow"]
+    row_idx = 0
+    trade_date = f"{year or 2026:04d}-{month or 1:02d}-01"
     for category_id, category_name, count, expense, income in categories:
         exp = abs(float(expense))
         inc = abs(float(income))
@@ -48,11 +64,37 @@ def _write_run(
         summary_lines.append(
             f"{category_id},{category_name},{int(count)},{sum_amount:.2f},{sum_expense:.2f},{sum_income:.2f},0,0"
         )
+        row_count = int(count)
+        if row_count <= 0:
+            continue
+        if exp > 0 and inc <= 0:
+            pieces = _split_amount(exp, row_count)
+            for piece in pieces:
+                row_idx += 1
+                categorized_lines.append(
+                    f"{run_id}_{row_idx},{trade_date},{-piece:.2f},{category_id},{category_name},false,expense"
+                )
+        elif inc > 0 and exp <= 0:
+            pieces = _split_amount(inc, row_count)
+            for piece in pieces:
+                row_idx += 1
+                categorized_lines.append(
+                    f"{run_id}_{row_idx},{trade_date},{piece:.2f},{category_id},{category_name},false,income"
+                )
+        else:
+            net = inc - exp
+            pieces = _split_amount(abs(net), row_count)
+            flow = "income" if net >= 0 else "expense"
+            sign = 1.0 if net >= 0 else -1.0
+            for piece in pieces:
+                row_idx += 1
+                categorized_lines.append(
+                    f"{run_id}_{row_idx},{trade_date},{sign * piece:.2f},{category_id},{category_name},false,{flow}"
+                )
     (out_dir / "category.summary.csv").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
 
     (out_dir / "unified.transactions.categorized.csv").write_text(
-        "txn_id,trade_date,amount,final_category_id\n"
-        f"{run_id}_txn,2026-01-01,-1,other\n",
+        "\n".join(categorized_lines) + "\n",
         encoding="utf-8",
     )
 

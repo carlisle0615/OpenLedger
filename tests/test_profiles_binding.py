@@ -42,6 +42,39 @@ def _write_run(root: Path, run_id: str, *, year: int, month: int, profile_id: st
 
 
 class ProfileBindingTests(unittest.TestCase):
+    def test_bill_metrics_recomputed_from_outputs_each_load(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = create_profile(root, "Alice")
+            _write_run(root, "run_a", year=2026, month=1)
+
+            add_bill_from_run(root, profile["id"], "run_a")
+
+            loaded_1 = load_profile(root, profile["id"])
+            self.assertEqual(len(loaded_1["bills"]), 1)
+            self.assertAlmostEqual(float(loaded_1["bills"][0]["totals"]["sum_amount"]), 100.0, places=4)
+
+            categorized_path = root / "runs" / "run_a" / "output" / "unified.transactions.categorized.csv"
+            categorized_path.write_text(
+                "txn_id,trade_date,amount,category_id,category_name,ignored,flow\n"
+                "t1,2026-01-01,250,food,餐饮,false,expense\n",
+                encoding="utf-8",
+            )
+
+            loaded_2 = load_profile(root, profile["id"])
+            self.assertAlmostEqual(float(loaded_2["bills"][0]["totals"]["sum_amount"]), 250.0, places=4)
+
+            db = root / "profiles.db"
+            with sqlite3.connect(db) as conn:
+                row = conn.execute(
+                    "SELECT totals_json, category_summary_json FROM bills WHERE profile_id = ? AND run_id = ?",
+                    (profile["id"], "run_a"),
+                ).fetchone()
+            self.assertIsNotNone(row)
+            assert row is not None
+            self.assertIsNone(row[0])
+            self.assertIsNone(row[1])
+
     def test_bind_without_month_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

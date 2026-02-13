@@ -125,6 +125,13 @@ def _to_float(value: Any) -> float:
         return 0.0
 
 
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "yes", "y"}
+
+
 def _json_loads(value: Any, default: Any) -> Any:
     if value is None or value == "":
         return default
@@ -214,6 +221,105 @@ def _read_category_summary(path: Path) -> tuple[dict[str, float], list[dict[str,
                 totals[key] += float(cat.get(key, 0.0))
     totals["net"] = totals.get("sum_amount", 0.0)
     return totals, categories
+
+
+def _read_category_summary_from_categorized(path: Path) -> tuple[dict[str, float], list[dict[str, Any]]]:
+    if not path.exists():
+        return {}, []
+
+    totals = {
+        "sum_amount": 0.0,
+        "sum_expense": 0.0,
+        "sum_income": 0.0,
+        "sum_refund": 0.0,
+        "sum_transfer": 0.0,
+        "count": 0.0,
+    }
+    grouped: dict[str, dict[str, Any]] = {}
+
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if _to_bool(row.get("ignored")) or _to_bool(row.get("final_ignored")):
+                continue
+            amount = _to_float(row.get("amount"))
+            category_id = str(row.get("category_id") or row.get("final_category_id") or "").strip() or "other"
+            category_name = str(row.get("category_name") or row.get("category") or "").strip() or category_id
+            flow = str(row.get("flow") or "").strip().lower()
+
+            cat = grouped.get(category_id)
+            if cat is None:
+                cat = {
+                    "category_id": category_id,
+                    "category_name": category_name,
+                    "count": 0.0,
+                    "sum_amount": 0.0,
+                    "sum_expense": 0.0,
+                    "sum_income": 0.0,
+                    "sum_refund": 0.0,
+                    "sum_transfer": 0.0,
+                }
+                grouped[category_id] = cat
+            elif not str(cat.get("category_name") or "").strip() and category_name:
+                cat["category_name"] = category_name
+
+            cat["count"] += 1.0
+            cat["sum_amount"] += amount
+            totals["count"] += 1.0
+            totals["sum_amount"] += amount
+
+            if amount < 0:
+                cat["sum_expense"] += amount
+                totals["sum_expense"] += amount
+            elif amount > 0:
+                if flow == "refund":
+                    cat["sum_refund"] += amount
+                    totals["sum_refund"] += amount
+                elif flow == "transfer":
+                    cat["sum_transfer"] += amount
+                    totals["sum_transfer"] += amount
+                else:
+                    cat["sum_income"] += amount
+                    totals["sum_income"] += amount
+
+    totals["net"] = totals.get("sum_amount", 0.0)
+    categories = sorted(
+        grouped.values(),
+        key=lambda item: (abs(float(item.get("sum_amount", 0.0))), str(item.get("category_id") or "")),
+        reverse=True,
+    )
+    return totals, categories
+
+
+def _resolve_bill_outputs(
+    root: Path,
+    run_id: str,
+    outputs: dict[str, Any],
+) -> tuple[dict[str, str], Path, Path]:
+    run_dir = root / "runs" / run_id
+    summary_rel = str(outputs.get("summary_csv") or "").strip()
+    categorized_rel = str(outputs.get("categorized_csv") or "").strip()
+
+    summary_path = (root / summary_rel) if summary_rel else run_dir / "output" / "category.summary.csv"
+    categorized_path = (
+        (root / categorized_rel)
+        if categorized_rel
+        else run_dir / "output" / "unified.transactions.categorized.csv"
+    )
+
+    resolved_outputs = {
+        "summary_csv": safe_rel_path(root, summary_path) if summary_path.exists() else summary_rel,
+        "categorized_csv": safe_rel_path(root, categorized_path) if categorized_path.exists() else categorized_rel,
+    }
+    return resolved_outputs, summary_path, categorized_path
+
+
+def _recompute_bill_metrics(summary_path: Path, categorized_path: Path) -> tuple[dict[str, float], list[dict[str, Any]]]:
+    if _csv_has_header(categorized_path):
+        return _read_category_summary_from_categorized(categorized_path)
+    if _csv_has_header(summary_path):
+        return _read_category_summary(summary_path)
+    return {}, []
 
 
 def _csv_has_header(path: Path) -> bool:
@@ -314,6 +420,15 @@ def load_profile(root: Path, profile_id: str) -> dict[str, Any]:
 
     out_bills: list[dict[str, Any]] = []
     for b in bills:
+        outputs_payload = _json_loads(b["outputs_json"], {})
+        try:
+            outputs = dict(outputs_payload or {})
+        except Exception:
+            outputs = {}
+        resolved_outputs, summary_path, categorized_path = _resolve_bill_outputs(
+            root, str(b["run_id"] or "").strip(), outputs
+        )
+        totals, category_summary = _recompute_bill_metrics(summary_path, categorized_path)
         out_bills.append(
             {
                 "run_id": b["run_id"],
@@ -328,9 +443,9 @@ def load_profile(root: Path, profile_id: str) -> dict[str, Any]:
                 "cross_month": bool(b["cross_month"]),
                 "created_at": b["created_at"],
                 "updated_at": b["updated_at"],
-                "outputs": _json_loads(b["outputs_json"], {}),
-                "totals": _json_loads(b["totals_json"], {}),
-                "category_summary": _json_loads(b["category_summary_json"], []),
+                "outputs": resolved_outputs,
+                "totals": totals,
+                "category_summary": category_summary,
             }
         )
 
@@ -525,8 +640,6 @@ def build_bill_from_run(root: Path, run_id: str) -> dict[str, Any]:
 
     _validate_final_outputs(summary_path, categorized_path)
 
-    totals, categories = _read_category_summary(summary_path)
-
     outputs = {
         "summary_csv": safe_rel_path(root, summary_path) if summary_path.exists() else "",
         "categorized_csv": safe_rel_path(root, categorized_path) if categorized_path.exists() else "",
@@ -551,8 +664,8 @@ def build_bill_from_run(root: Path, run_id: str) -> dict[str, Any]:
         "created_at": str(state.get("created_at") or ""),
         "updated_at": utc_now_iso(),
         "outputs": outputs,
-        "totals": totals,
-        "category_summary": categories,
+        "totals": {},
+        "category_summary": [],
     }
     return bill
 
@@ -595,8 +708,8 @@ def _upsert_bill(conn: sqlite3.Connection, profile_id: str, bill: dict[str, Any]
             bill.get("created_at"),
             bill.get("updated_at"),
             _json_dumps(bill.get("outputs") or {}),
-            _json_dumps(bill.get("totals") or {}),
-            _json_dumps(bill.get("category_summary") or []),
+            None,
+            None,
         ),
     )
 

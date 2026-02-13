@@ -1,4 +1,5 @@
 import React, { useMemo, useEffect } from "react";
+import { useHashRoute } from "@/hooks/useHashRoute";
 import { AlertCircle } from "lucide-react";
 import { api } from "@/utils/helpers";
 import { Profile, ProfileListItem } from "@/types";
@@ -22,7 +23,7 @@ import { ConfigCenterPage } from "@/components/ConfigCenterPage";
 
 
 export default function App() {
-  const [activeView, setActiveView] = React.useState<"workspace" | "profiles" | "capabilities" | "config">("workspace");
+  const [activeView, setActiveView] = useHashRoute();
   const appState = useAppState();
   const {
     baseUrl, runs, runId, runsMeta,
