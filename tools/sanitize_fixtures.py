@@ -43,6 +43,8 @@ KEEP_TOKENS = {
     "Currency",
     "Amount",
     "Balance",
+    "CNY",
+    "RMB",
     # 业务关键词
     "微信",
     "支付宝",
@@ -77,8 +79,21 @@ class Anonymizer:
         self.token_map: dict[str, str] = {}
         self.last4_map: dict[str, str] = {}
         self.digits_map: dict[str, str] = {}
+        self.region_map_2: dict[str, str] = {}
+        self.region_map_3: dict[str, str] = {}
         self.keep_tokens = KEEP_TOKENS.copy()
-        self._next_last4 = 1000
+        self._next_last4 = 4000
+        self._next_region2 = 0
+        self._next_region3 = 0
+
+    def _alpha_code(self, index: int, length: int) -> str:
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        chars: list[str] = []
+        n = index
+        for _ in range(length):
+            chars.append(alphabet[n % 26])
+            n //= 26
+        return "".join(reversed(chars))
 
     def map_last4(self, value: str) -> str:
         s = str(value).strip()
@@ -113,6 +128,38 @@ class Anonymizer:
         self.token_map[token] = alias
         return alias
 
+    def map_region(self, value: str) -> str:
+        s = str(value).strip().upper()
+        if not s:
+            return ""
+        if len(s) == 2:
+            if s in self.region_map_2:
+                return self.region_map_2[s]
+            while True:
+                cand = self._alpha_code(self._next_region2, 2)
+                self._next_region2 += 1
+                if cand != s and cand not in self.region_map_2.values():
+                    self.region_map_2[s] = cand
+                    return cand
+        if len(s) == 3:
+            if s in self.region_map_3:
+                return self.region_map_3[s]
+            while True:
+                cand = self._alpha_code(self._next_region3, 3)
+                self._next_region3 += 1
+                if cand != s and cand not in self.region_map_3.values():
+                    self.region_map_3[s] = cand
+                    return cand
+        return self.map_word(s)
+
+    def mask_region(self, value: str) -> str:
+        s = str(value).strip()
+        if not s:
+            return ""
+        if re.fullmatch(r"[A-Z]{2,3}", s):
+            return self.map_region(s)
+        return self.mask_text(s)
+
     def mask_text(self, text: str) -> str:
         if text is None:
             return ""
@@ -121,8 +168,6 @@ class Anonymizer:
         def repl(match: re.Match[str]) -> str:
             tok = match.group(0)
             if tok in self.keep_tokens:
-                return tok
-            if re.fullmatch(r"[A-Z]{2,3}", tok):
                 return tok
             if re.fullmatch(r"-?\d[\d,]*\.\d{2}", tok):
                 return tok
@@ -134,6 +179,10 @@ class Anonymizer:
                 if len(tok) == 4:
                     return self.map_last4(tok)
                 return self.map_digits(tok)
+            if re.fullmatch(r"[A-Z]{2,3}", tok):
+                if tok in self.keep_tokens:
+                    return tok
+                return self.map_region(tok)
             return self.map_word(tok)
 
         return TOKEN_RE.sub(repl, raw)
@@ -194,6 +243,9 @@ def _sanitize_df(df: pd.DataFrame, anon: Anonymizer) -> pd.DataFrame:
         key = col.lower()
         if key in {"card_last4", "account_last4"}:
             out[col] = out[col].map(anon.map_last4)
+            continue
+        if "region" in key:
+            out[col] = out[col].map(anon.mask_region)
             continue
         if key.endswith("_no") or key in {"trade_no", "merchant_no", "counterparty_account", "txn_id"}:
             out[col] = out[col].map(anon.mask_id)
