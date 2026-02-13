@@ -124,6 +124,19 @@ function asStringArray(value: unknown): string[] {
     return value.map((v) => asString(v).trim()).filter(Boolean);
 }
 
+function normalizeCardLast4(raw: unknown): string {
+    const text = asString(raw).trim();
+    if (!text) return "";
+    if (/^\d{4}$/.test(text)) return text;
+    const compact = text.replace(/\s+/g, "");
+    const fullCardMatch = compact.match(/\d{8,}$/);
+    if (fullCardMatch) {
+        return compact.slice(-4);
+    }
+    const tailMatch = compact.match(/(\d{4})$/);
+    return tailMatch ? tailMatch[1] : "";
+}
+
 function asCategoryArray(value: unknown): Category[] {
     if (!Array.isArray(value)) return [];
     return value
@@ -254,19 +267,33 @@ function validateConfig(config: ClassifierConfigShape): string | null {
 }
 
 function normalizeDebitCardAliases(raw: unknown): Record<string, string[]> {
+    const out: Record<string, string[]> = {};
+    if (Array.isArray(raw)) {
+        raw.forEach((item) => {
+            if (!isObject(item)) return;
+            const key = normalizeCardLast4(item.primary);
+            if (!key) return;
+            const rawAliases = Array.isArray(item.aliases) ? item.aliases : [item.aliases];
+            const aliases = rawAliases
+                .map((value) => normalizeCardLast4(value))
+                .filter((value) => value && value !== key);
+            if (!aliases.length) return;
+            out[key] = Array.from(new Set([...(out[key] || []), ...aliases]));
+        });
+        return out;
+    }
     if (!isObject(raw)) {
         return {};
     }
-    const out: Record<string, string[]> = {};
     Object.entries(raw).forEach(([k, v]) => {
-        const key = asString(k).trim();
-        if (!/^\d{4}$/.test(key)) return;
+        const key = normalizeCardLast4(k);
+        if (!key) return;
         const values = Array.isArray(v) ? v : [v];
         const aliases = values
-            .map((item) => asString(item).trim())
-            .filter((item) => /^\d{4}$/.test(item) && item !== key);
+            .map((item) => normalizeCardLast4(item))
+            .filter((item) => item && item !== key);
         if (!aliases.length) return;
-        out[key] = Array.from(new Set(aliases));
+        out[key] = Array.from(new Set([...(out[key] || []), ...aliases]));
     });
     return out;
 }
@@ -283,17 +310,18 @@ function aliasesToRows(aliases: Record<string, string[]>): CardAliasRow[] {
 function rowsToAliasMap(rows: CardAliasRow[]): Record<string, string[]> {
     const out: Record<string, string[]> = {};
     rows.forEach((row) => {
-        const primary = row.primary.trim();
-        if (!primary) return;
-        if (!/^\d{4}$/.test(primary)) {
-            throw new Error(`主卡尾号必须是 4 位数字：${primary}`);
+        const rawPrimary = row.primary.trim();
+        if (!rawPrimary) return;
+        const primary = normalizeCardLast4(rawPrimary);
+        if (!primary) {
+            throw new Error(`主卡请填写 4 位尾号或完整卡号：${rawPrimary}`);
         }
         const aliases = row.aliasesText
             .split(/[,\s，]+/)
-            .map((item) => item.trim())
+            .map((item) => normalizeCardLast4(item))
             .filter(Boolean);
         const normalized = Array.from(
-            new Set(aliases.filter((item) => /^\d{4}$/.test(item) && item !== primary)),
+            new Set(aliases.filter((item) => item !== primary)),
         );
         if (!normalized.length) {
             throw new Error(`请为主卡尾号 ${primary} 至少填写一个续卡尾号`);
@@ -301,6 +329,13 @@ function rowsToAliasMap(rows: CardAliasRow[]): Record<string, string[]> {
         out[primary] = normalized;
     });
     return out;
+}
+
+function classifierConfigPath(useCacheBust: boolean): string {
+    if (!useCacheBust) {
+        return "/api/config/classifier";
+    }
+    return `/api/config/classifier?_ts=${Date.now()}`;
 }
 
 function TextListEditor(props: {
@@ -399,7 +434,7 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
         setError("");
         setSuccess("");
         try {
-            const rawClassifier = await api<unknown>(baseUrl, "/api/config/classifier");
+            const rawClassifier = await api<unknown>(baseUrl, classifierConfigPath(true));
             const normalized = normalizeConfig(rawClassifier);
             setConfig(normalized);
             setCardAliasRows(aliasesToRows(normalized.debit_card_aliases || {}));
@@ -559,8 +594,11 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
-            setConfig(payload);
-            setJsonText(JSON.stringify(payload, null, 2));
+            const rawClassifier = await api<unknown>(baseUrl, classifierConfigPath(true));
+            const normalized = normalizeConfig(rawClassifier);
+            setConfig(normalized);
+            setCardAliasRows(aliasesToRows(normalized.debit_card_aliases || {}));
+            setJsonText(JSON.stringify(normalized, null, 2));
             setSuccess("全局配置已保存。")
             setLoadedAt(new Date().toLocaleString());
         } catch (e) {
@@ -598,9 +636,11 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
-            setConfig(payload);
-            setJsonText(JSON.stringify(payload, null, 2));
-            setCardAliasRows(aliasesToRows(aliasMap));
+            const rawClassifier = await api<unknown>(baseUrl, classifierConfigPath(true));
+            const normalized = normalizeConfig(rawClassifier);
+            setConfig(normalized);
+            setCardAliasRows(aliasesToRows(normalized.debit_card_aliases || {}));
+            setJsonText(JSON.stringify(normalized, null, 2));
             setSuccess("续卡映射已保存。")
             setLoadedAt(new Date().toLocaleString());
         } catch (e) {
