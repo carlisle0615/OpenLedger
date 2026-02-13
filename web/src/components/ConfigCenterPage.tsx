@@ -153,7 +153,7 @@ function asCategoryArray(value: unknown): Category[] {
 function asIgnoreRules(value: unknown): IgnoreRule[] {
     if (!Array.isArray(value)) return [];
     return value
-        .map((item, index) => {
+        .map((item, index): IgnoreRule | null => {
             if (!isObject(item)) return null;
             const when = isObject(item.when)
                 ? { primary_source: asString(item.when.primary_source).trim() }
