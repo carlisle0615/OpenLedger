@@ -174,6 +174,74 @@ def _prepare_profile(root: Path) -> str:
     return profile_id
 
 
+def _write_run_with_flow_breakdown(
+    root: Path,
+    run_id: str,
+    *,
+    year: int,
+    month: int,
+    sum_expense: float,
+    sum_income: float,
+    sum_refund: float,
+    sum_transfer: float,
+) -> None:
+    run_dir = root / "runs" / run_id
+    out_dir = run_dir / "output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "run_id": run_id,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "options": {
+            "period_mode": "billing",
+            "period_day": 20,
+            "period_year": year,
+            "period_month": month,
+        },
+    }
+    (run_dir / "state.json").write_text(
+        json.dumps(state, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    rows: list[tuple[str, float]] = []
+    if sum_expense != 0:
+        rows.append(("expense", float(sum_expense)))
+    if sum_income != 0:
+        rows.append(("income", float(sum_income)))
+    if sum_refund != 0:
+        rows.append(("refund", float(sum_refund)))
+    if sum_transfer != 0:
+        rows.append(("transfer", float(sum_transfer)))
+    if not rows:
+        rows.append(("other", 0.0))
+
+    count = len(rows)
+    sum_amount = float(sum_expense + sum_income + sum_refund + sum_transfer)
+    summary_lines = [
+        "category_id,category_name,count,sum_amount,sum_expense,sum_income,sum_refund,sum_transfer",
+        (
+            f"other,其他,{count},"
+            f"{sum_amount:.2f},{float(sum_expense):.2f},{float(sum_income):.2f},"
+            f"{float(sum_refund):.2f},{float(sum_transfer):.2f}"
+        ),
+    ]
+    (out_dir / "category.summary.csv").write_text(
+        "\n".join(summary_lines) + "\n",
+        encoding="utf-8",
+    )
+
+    trade_date = f"{year:04d}-{month:02d}-01"
+    categorized_lines = ["txn_id,trade_date,amount,category_id,category_name,ignored,flow"]
+    for idx, (flow, amount) in enumerate(rows, start=1):
+        categorized_lines.append(
+            f"{run_id}_{idx},{trade_date},{amount:.2f},other,其他,false,{flow}"
+        )
+    (out_dir / "unified.transactions.categorized.csv").write_text(
+        "\n".join(categorized_lines) + "\n",
+        encoding="utf-8",
+    )
+
+
 class ProfileReviewAnalyticsTests(unittest.TestCase):
     def test_build_profile_review_metrics_and_anomalies(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -214,6 +282,42 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
             self.assertEqual(result["scope"]["year"], 2026)
             for item in result["monthly_points"]:
                 self.assertEqual(int(item["year"]), 2026)
+
+    def test_review_overview_is_closed_with_refund_and_transfer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = create_profile(root, "Bob")
+            profile_id = str(profile["id"])
+
+            _write_run_with_flow_breakdown(
+                root,
+                "run_closed_loop",
+                year=2026,
+                month=1,
+                sum_expense=-100.0,
+                sum_income=200.0,
+                sum_refund=10.0,
+                sum_transfer=20.0,
+            )
+            add_bill_from_run(root, profile_id, "run_closed_loop")
+
+            result = build_profile_review(root, profile_id, year=2026, months=12)
+            overview = result["overview"]
+
+            self.assertAlmostEqual(float(overview["total_income"]), 230.0, places=4)
+            self.assertAlmostEqual(float(overview["total_expense"]), 100.0, places=4)
+            self.assertAlmostEqual(float(overview["net"]), 130.0, places=4)
+            self.assertAlmostEqual(
+                float(overview["net"]),
+                float(overview["total_income"]) - float(overview["total_expense"]),
+                places=4,
+            )
+
+            points = result["monthly_points"]
+            self.assertEqual(len(points), 1)
+            self.assertAlmostEqual(float(points[0]["income"]), 230.0, places=4)
+            self.assertAlmostEqual(float(points[0]["expense"]), 100.0, places=4)
+            self.assertAlmostEqual(float(points[0]["net"]), 130.0, places=4)
 
     def test_profile_review_api(self) -> None:
         if TestClient is None:

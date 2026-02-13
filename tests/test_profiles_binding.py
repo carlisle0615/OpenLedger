@@ -66,14 +66,12 @@ class ProfileBindingTests(unittest.TestCase):
 
             db = root / "profiles.db"
             with sqlite3.connect(db) as conn:
-                row = conn.execute(
-                    "SELECT totals_json, category_summary_json FROM bills WHERE profile_id = ? AND run_id = ?",
-                    (profile["id"], "run_a"),
-                ).fetchone()
-            self.assertIsNotNone(row)
-            assert row is not None
-            self.assertIsNone(row[0])
-            self.assertIsNone(row[1])
+                columns = {
+                    str(item[1])
+                    for item in conn.execute("PRAGMA table_info(bills)").fetchall()
+                }
+            self.assertNotIn("totals_json", columns)
+            self.assertNotIn("category_summary_json", columns)
 
     def test_bind_without_month_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

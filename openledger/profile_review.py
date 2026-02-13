@@ -16,6 +16,8 @@ class _RawBillTotals(_RawModel):
     sum_amount: float = 0.0
     sum_expense: float = 0.0
     sum_income: float = 0.0
+    sum_refund: float = 0.0
+    sum_transfer: float = 0.0
     count: float = 0.0
     net: float | None = None
 
@@ -26,6 +28,8 @@ class _RawCategorySummary(_RawModel):
     count: float = 0.0
     sum_expense: float = 0.0
     sum_income: float = 0.0
+    sum_refund: float = 0.0
+    sum_transfer: float = 0.0
 
 
 class _RawBill(_RawModel):
@@ -96,6 +100,22 @@ def _normalized_period_key(year: int, month: int) -> str:
     return f"{year:04d}-{month:02d}"
 
 
+def _inflow_outflow(
+    *,
+    sum_expense: float,
+    sum_income: float,
+    sum_refund: float,
+    sum_transfer: float,
+) -> tuple[float, float]:
+    expense_base = abs(float(sum_expense))
+    income_base = abs(float(sum_income))
+    refund = float(sum_refund)
+    transfer = float(sum_transfer)
+    inflow = income_base + max(refund, 0.0) + max(transfer, 0.0)
+    outflow = expense_base + max(-refund, 0.0) + max(-transfer, 0.0)
+    return inflow, outflow
+
+
 def _severity_rank(level: str) -> int:
     if level == "high":
         return 0
@@ -122,10 +142,14 @@ def _issue_label(issue: str) -> str:
 
 def _normalize_bill(raw_bill: _RawBill) -> _BillMetrics:
     totals = raw_bill.totals
-    expense = abs(float(totals.sum_expense))
-    income = abs(float(totals.sum_income))
-    net_raw = totals.net if totals.net is not None else totals.sum_amount
-    net = float(net_raw)
+    income, expense = _inflow_outflow(
+        sum_expense=totals.sum_expense,
+        sum_income=totals.sum_income,
+        sum_refund=totals.sum_refund,
+        sum_transfer=totals.sum_transfer,
+    )
+    # 审阅 KPI 采用闭环口径：净额 = 总流入 - 总流出。
+    net = float(income - expense)
     tx_count = int(round(float(totals.count)))
 
     category_expense: dict[str, float] = {}
@@ -136,8 +160,12 @@ def _normalize_bill(raw_bill: _RawBill) -> _BillMetrics:
     for item in raw_bill.category_summary:
         category_id = str(item.category_id or "").strip() or "other"
         category_name = str(item.category_name or "").strip() or "其他"
-        exp = abs(float(item.sum_expense))
-        inc = abs(float(item.sum_income))
+        inc, exp = _inflow_outflow(
+            sum_expense=item.sum_expense,
+            sum_income=item.sum_income,
+            sum_refund=item.sum_refund,
+            sum_transfer=item.sum_transfer,
+        )
         cnt = int(round(float(item.count)))
 
         category_names[category_id] = category_name
