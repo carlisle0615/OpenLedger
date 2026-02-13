@@ -1,0 +1,4 @@
+# Optional local/project allowlist for privacy_guard.
+# One regex per line, matched against: "<file_path>:<line_content>".
+# Keep this file short and audited.
+^tools/privacy_guard\.py:.*geo_keyword

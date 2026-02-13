@@ -41,6 +41,27 @@ cd web
 pnpm build
 ```
 
+Privacy guard (full repo scan):
+```bash
+uv run python tools/privacy_guard.py --all
+```
+
+Privacy guard (CI-equivalent, only blocking rules):
+```bash
+uv run python tools/privacy_guard.py --all --errors-only
+```
+
+Enable local git pre-commit hook:
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit
+```
+
+Strict mode (warnings also block commit):
+```bash
+PYTHONPATH=. uv run python tools/privacy_guard.py --staged --fail-on-warn
+```
+
 ## Pull Requests
 
 - Keep changes focused and small.

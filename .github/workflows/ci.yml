@@ -19,6 +19,8 @@ jobs:
           python -m pip install uv
       - name: Install dependencies
         run: uv sync --locked
+      - name: Privacy guard
+        run: uv run python tools/privacy_guard.py --all --errors-only
       - name: Syntax check
         run: uv run python -m compileall main.py stages tools openledger tests
       - name: Unit tests
