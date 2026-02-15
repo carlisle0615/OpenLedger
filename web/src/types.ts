@@ -156,6 +156,7 @@ export type ReviewOverview = {
     anomaly_count: number;
     salary_income: number;
     subsidy_income: number;
+    transfer_income: number;
     other_income: number;
 };
 
@@ -171,8 +172,30 @@ export type ReviewMonthlyPoint = {
     yoy_expense_rate: number | null;
     salary_income: number;
     subsidy_income: number;
+    transfer_income: number;
     other_income: number;
+    income_top_transactions: ReviewIncomeTopTransactions;
     category_expense_breakdown: ReviewMonthlyCategoryExpense[];
+};
+
+export type ReviewIncomeTopTransactions = {
+    salary: ReviewIncomeTopTransaction[];
+    subsidy: ReviewIncomeTopTransaction[];
+    transfer: ReviewIncomeTopTransaction[];
+    other: ReviewIncomeTopTransaction[];
+};
+
+export type ReviewIncomeTopTransaction = {
+    txn_id: string;
+    run_id: string;
+    trade_date: string;
+    amount: number;
+    merchant: string;
+    item: string;
+    account: string;
+    category_id: string;
+    category_name: string;
+    flow: string;
 };
 
 export type ReviewMonthlyCategoryExpense = {

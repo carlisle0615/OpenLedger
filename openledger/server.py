@@ -361,6 +361,7 @@ class ProfileReviewOverviewModel(ResponseModel):
     anomaly_count: int
     salary_income: float
     subsidy_income: float
+    transfer_income: float
     other_income: float
 
 
@@ -376,10 +377,27 @@ class ReviewMonthlyPointModel(ResponseModel):
     yoy_expense_rate: float | None = None
     salary_income: float
     subsidy_income: float
+    transfer_income: float
     other_income: float
+    income_top_transactions: dict[str, list["ReviewIncomeTopTransactionModel"]] = Field(
+        default_factory=dict
+    )
     category_expense_breakdown: list["ReviewMonthlyCategoryExpenseModel"] = Field(
         default_factory=list
     )
+
+
+class ReviewIncomeTopTransactionModel(ResponseModel):
+    txn_id: str
+    run_id: str
+    trade_date: str
+    amount: float
+    merchant: str
+    item: str
+    account: str
+    category_id: str
+    category_name: str
+    flow: str
 
 
 class ReviewMonthlyCategoryExpenseModel(ResponseModel):

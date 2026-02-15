@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,6 +39,9 @@ class _RawBill(_RawModel):
     period_key: str = ""
     year: int | None = None
     month: int | None = None
+    period_start: str = ""
+    period_end: str = ""
+    outputs: dict[str, str] = Field(default_factory=dict)
     totals: _RawBillTotals = Field(default_factory=_RawBillTotals)
     category_summary: list[_RawCategorySummary] = Field(default_factory=list)
 
@@ -71,8 +76,12 @@ class _BillMetrics:
     tx_count: int
     category_expense: dict[str, float]
     category_income: dict[str, float]
+    category_transfer_income: dict[str, float]
     category_count: dict[str, int]
     category_names: dict[str, str]
+    period_start: str
+    period_end: str
+    categorized_csv: str
 
 
 @dataclass
@@ -175,25 +184,41 @@ def _income_bucket(category_id: str, category_name: str) -> str:
 def _build_income_breakdown(bills: list[_BillMetrics]) -> dict[str, float]:
     salary_income = 0.0
     subsidy_income = 0.0
+    transfer_income = 0.0
     other_income = 0.0
 
     for bill in bills:
         for category_id, amount in bill.category_income.items():
-            value = float(amount)
-            if value <= 0:
+            category_id_norm = str(category_id or "").strip().lower()
+            value = max(float(amount), 0.0)
+            transfer_value = max(
+                float(bill.category_transfer_income.get(category_id, 0.0)), 0.0
+            )
+            transfer_value = min(transfer_value, value)
+            regular_value = max(value - transfer_value, 0.0)
+
+            if regular_value > 0:
+                category_name = bill.category_names.get(category_id, category_id)
+                bucket = _income_bucket(category_id, category_name)
+                if bucket == "salary":
+                    salary_income += regular_value
+                elif bucket == "subsidy":
+                    subsidy_income += regular_value
+                else:
+                    other_income += regular_value
+
+            if transfer_value <= 0:
                 continue
-            category_name = bill.category_names.get(category_id, category_id)
-            bucket = _income_bucket(category_id, category_name)
-            if bucket == "salary":
-                salary_income += value
-            elif bucket == "subsidy":
-                subsidy_income += value
+            # 约定：转账单独统计；仅保留显式映射到 salary_wages 的转账作为工资例外。
+            if category_id_norm == "salary_wages":
+                salary_income += transfer_value
             else:
-                other_income += value
+                transfer_income += transfer_value
 
     return {
         "salary_income": _round2(salary_income),
         "subsidy_income": _round2(subsidy_income),
+        "transfer_income": _round2(transfer_income),
         "other_income": _round2(other_income),
     }
 
@@ -208,20 +233,38 @@ def _build_monthly_income_breakdown(
         key = (bill.year, bill.month)
         slot = monthly.get(key)
         if slot is None:
-            slot = {"salary_income": 0.0, "subsidy_income": 0.0, "other_income": 0.0}
+            slot = {
+                "salary_income": 0.0,
+                "subsidy_income": 0.0,
+                "transfer_income": 0.0,
+                "other_income": 0.0,
+            }
             monthly[key] = slot
         for category_id, amount in bill.category_income.items():
-            value = float(amount)
-            if value <= 0:
+            category_id_norm = str(category_id or "").strip().lower()
+            value = max(float(amount), 0.0)
+            transfer_value = max(
+                float(bill.category_transfer_income.get(category_id, 0.0)), 0.0
+            )
+            transfer_value = min(transfer_value, value)
+            regular_value = max(value - transfer_value, 0.0)
+
+            if regular_value > 0:
+                category_name = bill.category_names.get(category_id, category_id)
+                bucket = _income_bucket(category_id, category_name)
+                if bucket == "salary":
+                    slot["salary_income"] += regular_value
+                elif bucket == "subsidy":
+                    slot["subsidy_income"] += regular_value
+                else:
+                    slot["other_income"] += regular_value
+
+            if transfer_value <= 0:
                 continue
-            category_name = bill.category_names.get(category_id, category_id)
-            bucket = _income_bucket(category_id, category_name)
-            if bucket == "salary":
-                slot["salary_income"] += value
-            elif bucket == "subsidy":
-                slot["subsidy_income"] += value
+            if category_id_norm == "salary_wages":
+                slot["salary_income"] += transfer_value
             else:
-                slot["other_income"] += value
+                slot["transfer_income"] += transfer_value
     return monthly
 
 
@@ -232,6 +275,139 @@ def _build_category_name_map(bills: list[_BillMetrics]) -> dict[str, str]:
             cid = str(category_id or "").strip() or "other"
             cname = str(category_name or "").strip() or cid
             output[cid] = cname
+    return output
+
+
+def _parse_date(value: str) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    text = text[:10]
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _to_bool(value: object) -> bool:
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "yes", "y"}
+
+
+def _to_float(value: object) -> float:
+    text = str(value or "").strip().replace(",", "")
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except Exception:
+        return 0.0
+
+
+def _empty_income_top_transactions() -> dict[str, list[dict[str, object]]]:
+    return {
+        "salary": [],
+        "subsidy": [],
+        "transfer": [],
+        "other": [],
+    }
+
+
+def _build_monthly_income_top_transactions(
+    root: Path,
+    bills: list[_BillMetrics],
+    *,
+    top_n: int = 10,
+) -> dict[tuple[int, int], dict[str, list[dict[str, object]]]]:
+    output: dict[tuple[int, int], dict[str, list[dict[str, object]]]] = {}
+
+    for bill in bills:
+        if bill.year is None or bill.month is None:
+            continue
+        month_key = (bill.year, bill.month)
+        slot = output.get(month_key)
+        if slot is None:
+            slot = _empty_income_top_transactions()
+            output[month_key] = slot
+
+        rel_csv = str(bill.categorized_csv or "").strip()
+        if not rel_csv:
+            continue
+        csv_path = root / rel_csv
+        if not csv_path.exists():
+            continue
+
+        period_start = _parse_date(bill.period_start)
+        period_end = _parse_date(bill.period_end)
+
+        try:
+            with csv_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if _to_bool(row.get("ignored")) or _to_bool(row.get("final_ignored")):
+                        continue
+                    amount = _to_float(row.get("amount"))
+                    if amount <= 0:
+                        continue
+
+                    trade_date = str(row.get("trade_date") or "").strip()
+                    trade_day = _parse_date(trade_date)
+                    if (
+                        period_start is not None
+                        and period_end is not None
+                        and trade_day is not None
+                        and not (period_start <= trade_day <= period_end)
+                    ):
+                        continue
+
+                    category_id = (
+                        str(row.get("category_id") or row.get("final_category_id") or "")
+                        .strip()
+                        .lower()
+                        or "other"
+                    )
+                    category_name = (
+                        str(row.get("category_name") or row.get("category") or "").strip()
+                        or category_id
+                    )
+                    flow = str(row.get("flow") or "").strip().lower()
+
+                    if flow == "transfer":
+                        bucket = "salary" if category_id == "salary_wages" else "transfer"
+                    else:
+                        bucket = _income_bucket(category_id, category_name)
+
+                    if bucket not in slot:
+                        continue
+
+                    slot[bucket].append(
+                        {
+                            "txn_id": str(row.get("txn_id") or "").strip(),
+                            "run_id": bill.run_id,
+                            "trade_date": trade_date,
+                            "amount": _round2(amount),
+                            "merchant": str(row.get("merchant") or "").strip(),
+                            "item": str(row.get("item") or "").strip(),
+                            "account": str(row.get("account") or "").strip(),
+                            "category_id": category_id,
+                            "category_name": category_name,
+                            "flow": flow,
+                        }
+                    )
+        except Exception:
+            continue
+
+    for slot in output.values():
+        for bucket in ("salary", "subsidy", "transfer", "other"):
+            rows = list(slot.get(bucket, []))
+            rows.sort(
+                key=lambda item: (
+                    float(item.get("amount") or 0.0),
+                    str(item.get("trade_date") or ""),
+                ),
+                reverse=True,
+            )
+            slot[bucket] = rows[:top_n]
     return output
 
 
@@ -249,6 +425,7 @@ def _normalize_bill(raw_bill: _RawBill) -> _BillMetrics:
 
     category_expense: dict[str, float] = {}
     category_income: dict[str, float] = {}
+    category_transfer_income: dict[str, float] = {}
     category_count: dict[str, int] = {}
     category_names: dict[str, str] = {}
 
@@ -266,6 +443,9 @@ def _normalize_bill(raw_bill: _RawBill) -> _BillMetrics:
         category_names[category_id] = category_name
         category_expense[category_id] = category_expense.get(category_id, 0.0) + exp
         category_income[category_id] = category_income.get(category_id, 0.0) + inc
+        category_transfer_income[category_id] = category_transfer_income.get(
+            category_id, 0.0
+        ) + max(float(item.sum_transfer), 0.0)
         category_count[category_id] = category_count.get(category_id, 0) + cnt
 
     if not category_expense and expense > 0:
@@ -275,6 +455,7 @@ def _normalize_bill(raw_bill: _RawBill) -> _BillMetrics:
     if not category_income and income > 0:
         category_names["other"] = "其他"
         category_income["other"] = income
+        category_transfer_income["other"] = max(float(totals.sum_transfer), 0.0)
         category_count["other"] = category_count.get("other", 0) + tx_count
 
     return _BillMetrics(
@@ -288,8 +469,12 @@ def _normalize_bill(raw_bill: _RawBill) -> _BillMetrics:
         tx_count=tx_count,
         category_expense=category_expense,
         category_income=category_income,
+        category_transfer_income=category_transfer_income,
         category_count=category_count,
         category_names=category_names,
+        period_start=str(raw_bill.period_start or "").strip(),
+        period_end=str(raw_bill.period_end or "").strip(),
+        categorized_csv=str(raw_bill.outputs.get("categorized_csv") or "").strip(),
     )
 
 
@@ -426,6 +611,9 @@ def build_profile_review(
     scoped_monthly = _aggregate_monthly(scoped_complete_bills)
     all_monthly_map = {(item.year, item.month): item for item in all_monthly}
     monthly_income_breakdown = _build_monthly_income_breakdown(scoped_complete_bills)
+    monthly_income_top_transactions = _build_monthly_income_top_transactions(
+        root, scoped_complete_bills
+    )
     category_name_map = _build_category_name_map(scoped_bills)
 
     monthly_points_full: list[dict[str, object]] = []
@@ -441,6 +629,9 @@ def build_profile_review(
             yoy_rate = _round4((item.expense - yoy_item.expense) / yoy_item.expense)
 
         income_detail = monthly_income_breakdown.get((item.year, item.month), {})
+        income_top_transactions = monthly_income_top_transactions.get(
+            (item.year, item.month), _empty_income_top_transactions()
+        )
         category_expense_breakdown = [
             {
                 "category_id": str(category_id),
@@ -470,7 +661,16 @@ def build_profile_review(
                 "subsidy_income": _round2(
                     float(income_detail.get("subsidy_income", 0.0))
                 ),
+                "transfer_income": _round2(
+                    float(income_detail.get("transfer_income", 0.0))
+                ),
                 "other_income": _round2(float(income_detail.get("other_income", 0.0))),
+                "income_top_transactions": {
+                    "salary": list(income_top_transactions.get("salary", [])),
+                    "subsidy": list(income_top_transactions.get("subsidy", [])),
+                    "transfer": list(income_top_transactions.get("transfer", [])),
+                    "other": list(income_top_transactions.get("other", [])),
+                },
                 "category_expense_breakdown": category_expense_breakdown,
                 "_run_id": item.run_id,
                 "_top_share": _round4(
@@ -650,6 +850,7 @@ def build_profile_review(
         "anomaly_count": len(anomalies),
         "salary_income": float(income_breakdown["salary_income"]),
         "subsidy_income": float(income_breakdown["subsidy_income"]),
+        "transfer_income": float(income_breakdown["transfer_income"]),
         "other_income": float(income_breakdown["other_income"]),
     }
 
@@ -666,7 +867,9 @@ def build_profile_review(
             "yoy_expense_rate": item["yoy_expense_rate"],
             "salary_income": float(item["salary_income"]),
             "subsidy_income": float(item["subsidy_income"]),
+            "transfer_income": float(item["transfer_income"]),
             "other_income": float(item["other_income"]),
+            "income_top_transactions": dict(item["income_top_transactions"]),
             "category_expense_breakdown": list(item["category_expense_breakdown"]),
         }
         for item in monthly_points_display

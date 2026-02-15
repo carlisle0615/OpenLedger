@@ -43,6 +43,7 @@ export function ReviewKpiCards({ overview }: ReviewKpiCardsProps) {
     const incomeItems = [
         { key: "salary", label: "工资收入", value: overview.salary_income },
         { key: "subsidy", label: "补贴收入", value: overview.subsidy_income },
+        { key: "transfer", label: "转账收入", value: overview.transfer_income },
         { key: "other", label: "其他收入", value: overview.other_income },
     ];
 
@@ -61,7 +62,7 @@ export function ReviewKpiCards({ overview }: ReviewKpiCardsProps) {
                     </Card>
                 ))}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                 {incomeItems.map((item) => {
                     const rawValue = Number.isFinite(item.value) ? Math.max(0, item.value) : 0;
                     const ratio = totalIncome > 0 ? rawValue / totalIncome : 0;

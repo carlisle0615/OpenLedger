@@ -32,13 +32,14 @@ function piePath(cx: number, cy: number, r: number, start: number, end: number):
     return `M ${cx} ${cy} L ${s.x} ${s.y} A ${r} ${r} 0 ${largeArc} 1 ${e.x} ${e.y} Z`;
 }
 
-const colors = ["#2563eb", "#0891b2", "#f59e0b"];
+const colors = ["#2563eb", "#0891b2", "#0f766e", "#f59e0b"];
 
 export function IncomePieChart({ overview }: IncomePieChartProps) {
     const rows = [
         { key: "salary", label: "工资", value: Math.max(0, Number(overview.salary_income || 0)), color: colors[0] },
         { key: "subsidy", label: "补贴", value: Math.max(0, Number(overview.subsidy_income || 0)), color: colors[1] },
-        { key: "other", label: "其他", value: Math.max(0, Number(overview.other_income || 0)), color: colors[2] },
+        { key: "transfer", label: "转账", value: Math.max(0, Number(overview.transfer_income || 0)), color: colors[2] },
+        { key: "other", label: "其他", value: Math.max(0, Number(overview.other_income || 0)), color: colors[3] },
     ];
     const data = rows.filter((item) => item.value > 0);
     const total = data.reduce((sum, item) => sum + item.value, 0);

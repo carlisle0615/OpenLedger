@@ -326,7 +326,13 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
             self.assertAlmostEqual(float(points[0]["net"]), 130.0, places=4)
             self.assertAlmostEqual(float(points[0]["salary_income"]), 0.0, places=4)
             self.assertAlmostEqual(float(points[0]["subsidy_income"]), 0.0, places=4)
-            self.assertAlmostEqual(float(points[0]["other_income"]), 230.0, places=4)
+            self.assertAlmostEqual(float(points[0]["transfer_income"]), 20.0, places=4)
+            self.assertAlmostEqual(float(points[0]["other_income"]), 210.0, places=4)
+            self.assertIn("income_top_transactions", points[0])
+            self.assertGreaterEqual(
+                len(points[0]["income_top_transactions"]["transfer"]),
+                1,
+            )
             self.assertEqual(len(points[0]["category_expense_breakdown"]), 1)
             self.assertEqual(points[0]["category_expense_breakdown"][0]["category_id"], "other")
             self.assertAlmostEqual(
@@ -363,17 +369,22 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
             self.assertAlmostEqual(float(overview["total_income"]), 12200.0, places=4)
             self.assertAlmostEqual(float(overview["salary_income"]), 11200.0, places=4)
             self.assertAlmostEqual(float(overview["subsidy_income"]), 800.0, places=4)
+            self.assertAlmostEqual(float(overview["transfer_income"]), 0.0, places=4)
             self.assertAlmostEqual(float(overview["other_income"]), 200.0, places=4)
             self.assertAlmostEqual(
                 float(overview["salary_income"])
                 + float(overview["subsidy_income"])
+                + float(overview["transfer_income"])
                 + float(overview["other_income"]),
                 float(overview["total_income"]),
                 places=4,
             )
             self.assertAlmostEqual(float(points[0]["salary_income"]), 11200.0, places=4)
             self.assertAlmostEqual(float(points[0]["subsidy_income"]), 800.0, places=4)
+            self.assertAlmostEqual(float(points[0]["transfer_income"]), 0.0, places=4)
             self.assertAlmostEqual(float(points[0]["other_income"]), 200.0, places=4)
+            self.assertIn("income_top_transactions", points[0])
+            self.assertEqual(len(points[0]["income_top_transactions"]["transfer"]), 0)
 
     def test_profile_review_api(self) -> None:
         if TestClient is None:
@@ -390,6 +401,9 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
                 self.assertIn("overview", payload)
                 self.assertIn("monthly_points", payload)
                 self.assertIn("anomalies", payload)
+                self.assertIn("transfer_income", payload["overview"])
+                self.assertIn("transfer_income", payload["monthly_points"][0])
+                self.assertIn("income_top_transactions", payload["monthly_points"][0])
                 self.assertIn("category_expense_breakdown", payload["monthly_points"][0])
 
                 not_found_resp = client.get("/api/profiles/not_exists/review")
