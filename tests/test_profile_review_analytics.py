@@ -265,6 +265,11 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
                     for item in jan_2026["category_expense_breakdown"]
                 )
             )
+            self.assertIn("expense_top_transactions", jan_2026)
+            self.assertGreaterEqual(
+                len(jan_2026["expense_top_transactions"].get("__all__", [])),
+                1,
+            )
             feb_2026 = next(
                 item for item in monthly_points if item["year"] == 2026 and item["month"] == 2
             )
@@ -329,8 +334,13 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
             self.assertAlmostEqual(float(points[0]["transfer_income"]), 20.0, places=4)
             self.assertAlmostEqual(float(points[0]["other_income"]), 210.0, places=4)
             self.assertIn("income_top_transactions", points[0])
+            self.assertIn("expense_top_transactions", points[0])
             self.assertGreaterEqual(
                 len(points[0]["income_top_transactions"]["transfer"]),
+                1,
+            )
+            self.assertGreaterEqual(
+                len(points[0]["expense_top_transactions"].get("__all__", [])),
                 1,
             )
             self.assertEqual(len(points[0]["category_expense_breakdown"]), 1)
@@ -384,7 +394,9 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
             self.assertAlmostEqual(float(points[0]["transfer_income"]), 0.0, places=4)
             self.assertAlmostEqual(float(points[0]["other_income"]), 200.0, places=4)
             self.assertIn("income_top_transactions", points[0])
+            self.assertIn("expense_top_transactions", points[0])
             self.assertEqual(len(points[0]["income_top_transactions"]["transfer"]), 0)
+            self.assertEqual(len(points[0]["expense_top_transactions"].get("__all__", [])), 0)
 
     def test_profile_review_api(self) -> None:
         if TestClient is None:
@@ -404,6 +416,7 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
                 self.assertIn("transfer_income", payload["overview"])
                 self.assertIn("transfer_income", payload["monthly_points"][0])
                 self.assertIn("income_top_transactions", payload["monthly_points"][0])
+                self.assertIn("expense_top_transactions", payload["monthly_points"][0])
                 self.assertIn("category_expense_breakdown", payload["monthly_points"][0])
 
                 not_found_resp = client.get("/api/profiles/not_exists/review")

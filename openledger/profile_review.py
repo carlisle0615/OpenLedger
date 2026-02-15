@@ -313,6 +313,10 @@ def _empty_income_top_transactions() -> dict[str, list[dict[str, object]]]:
     }
 
 
+def _empty_expense_top_transactions() -> dict[str, list[dict[str, object]]]:
+    return {"__all__": []}
+
+
 def _build_monthly_income_top_transactions(
     root: Path,
     bills: list[_BillMetrics],
@@ -408,6 +412,102 @@ def _build_monthly_income_top_transactions(
                 reverse=True,
             )
             slot[bucket] = rows[:top_n]
+    return output
+
+
+def _build_monthly_expense_top_transactions(
+    root: Path,
+    bills: list[_BillMetrics],
+    *,
+    top_n: int = 10,
+) -> dict[tuple[int, int], dict[str, list[dict[str, object]]]]:
+    output: dict[tuple[int, int], dict[str, list[dict[str, object]]]] = {}
+
+    for bill in bills:
+        if bill.year is None or bill.month is None:
+            continue
+        month_key = (bill.year, bill.month)
+        slot = output.get(month_key)
+        if slot is None:
+            slot = _empty_expense_top_transactions()
+            output[month_key] = slot
+
+        rel_csv = str(bill.categorized_csv or "").strip()
+        if not rel_csv:
+            continue
+        csv_path = root / rel_csv
+        if not csv_path.exists():
+            continue
+
+        period_start = _parse_date(bill.period_start)
+        period_end = _parse_date(bill.period_end)
+
+        try:
+            with csv_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if _to_bool(row.get("ignored")) or _to_bool(row.get("final_ignored")):
+                        continue
+
+                    amount = _to_float(row.get("amount"))
+                    if amount >= 0:
+                        continue
+
+                    trade_date = str(row.get("trade_date") or "").strip()
+                    trade_day = _parse_date(trade_date)
+                    if (
+                        period_start is not None
+                        and period_end is not None
+                        and trade_day is not None
+                        and not (period_start <= trade_day <= period_end)
+                    ):
+                        continue
+
+                    category_id = (
+                        str(row.get("category_id") or row.get("final_category_id") or "")
+                        .strip()
+                        .lower()
+                        or "other"
+                    )
+                    category_name = (
+                        str(row.get("category_name") or row.get("category") or "").strip()
+                        or category_id
+                    )
+                    flow = str(row.get("flow") or "").strip().lower()
+
+                    tx = {
+                        "txn_id": str(row.get("txn_id") or "").strip(),
+                        "run_id": bill.run_id,
+                        "trade_date": trade_date,
+                        "amount": _round2(abs(amount)),
+                        "merchant": str(row.get("merchant") or "").strip(),
+                        "item": str(row.get("item") or "").strip(),
+                        "account": str(row.get("account") or "").strip(),
+                        "category_id": category_id,
+                        "category_name": category_name,
+                        "flow": flow,
+                    }
+
+                    slot["__all__"].append(tx)
+                    bucket_rows = slot.get(category_id)
+                    if bucket_rows is None:
+                        bucket_rows = []
+                        slot[category_id] = bucket_rows
+                    bucket_rows.append(tx)
+        except Exception:
+            continue
+
+    for slot in output.values():
+        for key, rows in list(slot.items()):
+            sorted_rows = list(rows)
+            sorted_rows.sort(
+                key=lambda item: (
+                    float(item.get("amount") or 0.0),
+                    str(item.get("trade_date") or ""),
+                ),
+                reverse=True,
+            )
+            slot[key] = sorted_rows[:top_n]
     return output
 
 
@@ -614,6 +714,9 @@ def build_profile_review(
     monthly_income_top_transactions = _build_monthly_income_top_transactions(
         root, scoped_complete_bills
     )
+    monthly_expense_top_transactions = _build_monthly_expense_top_transactions(
+        root, scoped_complete_bills
+    )
     category_name_map = _build_category_name_map(scoped_bills)
 
     monthly_points_full: list[dict[str, object]] = []
@@ -631,6 +734,9 @@ def build_profile_review(
         income_detail = monthly_income_breakdown.get((item.year, item.month), {})
         income_top_transactions = monthly_income_top_transactions.get(
             (item.year, item.month), _empty_income_top_transactions()
+        )
+        expense_top_transactions = monthly_expense_top_transactions.get(
+            (item.year, item.month), _empty_expense_top_transactions()
         )
         category_expense_breakdown = [
             {
@@ -670,6 +776,10 @@ def build_profile_review(
                     "subsidy": list(income_top_transactions.get("subsidy", [])),
                     "transfer": list(income_top_transactions.get("transfer", [])),
                     "other": list(income_top_transactions.get("other", [])),
+                },
+                "expense_top_transactions": {
+                    str(category_id): list(rows)
+                    for category_id, rows in expense_top_transactions.items()
                 },
                 "category_expense_breakdown": category_expense_breakdown,
                 "_run_id": item.run_id,
@@ -870,6 +980,7 @@ def build_profile_review(
             "transfer_income": float(item["transfer_income"]),
             "other_income": float(item["other_income"]),
             "income_top_transactions": dict(item["income_top_transactions"]),
+            "expense_top_transactions": dict(item["expense_top_transactions"]),
             "category_expense_breakdown": list(item["category_expense_breakdown"]),
         }
         for item in monthly_points_display

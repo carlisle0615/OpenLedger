@@ -175,6 +175,7 @@ export type ReviewMonthlyPoint = {
     transfer_income: number;
     other_income: number;
     income_top_transactions: ReviewIncomeTopTransactions;
+    expense_top_transactions: ReviewExpenseTopTransactions;
     category_expense_breakdown: ReviewMonthlyCategoryExpense[];
 };
 
@@ -186,6 +187,23 @@ export type ReviewIncomeTopTransactions = {
 };
 
 export type ReviewIncomeTopTransaction = {
+    txn_id: string;
+    run_id: string;
+    trade_date: string;
+    amount: number;
+    merchant: string;
+    item: string;
+    account: string;
+    category_id: string;
+    category_name: string;
+    flow: string;
+};
+
+export type ReviewExpenseTopTransactions = {
+    [categoryId: string]: ReviewExpenseTopTransaction[];
+};
+
+export type ReviewExpenseTopTransaction = {
     txn_id: string;
     run_id: string;
     trade_date: string;

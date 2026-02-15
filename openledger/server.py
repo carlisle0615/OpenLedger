@@ -382,12 +382,28 @@ class ReviewMonthlyPointModel(ResponseModel):
     income_top_transactions: dict[str, list["ReviewIncomeTopTransactionModel"]] = Field(
         default_factory=dict
     )
+    expense_top_transactions: dict[str, list["ReviewExpenseTopTransactionModel"]] = Field(
+        default_factory=dict
+    )
     category_expense_breakdown: list["ReviewMonthlyCategoryExpenseModel"] = Field(
         default_factory=list
     )
 
 
 class ReviewIncomeTopTransactionModel(ResponseModel):
+    txn_id: str
+    run_id: str
+    trade_date: str
+    amount: float
+    merchant: str
+    item: str
+    account: str
+    category_id: str
+    category_name: str
+    flow: str
+
+
+class ReviewExpenseTopTransactionModel(ResponseModel):
     txn_id: str
     run_id: str
     trade_date: str

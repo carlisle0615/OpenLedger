@@ -161,10 +161,29 @@ export function createExpenseYoyTrendDataSource({
                     color: line.color,
                 }))
                 .sort((a, b) => b.value - a.value);
+            const point = points.find(
+                (row) => row.year === Number(hover.seriesKey) && row.month === hover.pointIndex + 1,
+            );
+            const byCategory = point?.expense_top_transactions || {};
+            let rawDetails = byCategory[activeCategory] || [];
+            if (activeCategory !== "__all__" && rawDetails.length === 0) {
+                rawDetails = (byCategory["__all__"] || []).filter(
+                    (row) => row.category_id === activeCategory,
+                );
+            }
+            const details: TrendTooltipDetail[] = rawDetails.slice(0, 10).map((row, idx) => ({
+                key: `${row.txn_id}-${row.run_id}-${idx}`,
+                label: row.trade_date || "-",
+                subLabel: row.merchant || row.category_name || "-",
+                value: Number(row.amount || 0),
+            }));
             return {
                 title: `${hover.pointLabel} ${activeCategoryLabel}`,
                 subtitle: "同比年度分布",
                 items,
+                detailsTitle: "Top 10 支出明细",
+                details,
+                emptyDetailsText: "暂无可展示明细",
             };
         },
         pointTitleFormatter: (point) =>
