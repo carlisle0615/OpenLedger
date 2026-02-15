@@ -318,6 +318,49 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
             self.assertAlmostEqual(float(points[0]["income"]), 230.0, places=4)
             self.assertAlmostEqual(float(points[0]["expense"]), 100.0, places=4)
             self.assertAlmostEqual(float(points[0]["net"]), 130.0, places=4)
+            self.assertAlmostEqual(float(points[0]["salary_income"]), 0.0, places=4)
+            self.assertAlmostEqual(float(points[0]["subsidy_income"]), 0.0, places=4)
+            self.assertAlmostEqual(float(points[0]["other_income"]), 230.0, places=4)
+
+    def test_review_income_breakdown_salary_and_subsidy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = create_profile(root, "Carol")
+            profile_id = str(profile["id"])
+
+            _write_run(
+                root,
+                "run_income_breakdown",
+                year=2026,
+                month=6,
+                categories=[
+                    ("salary_wages", "工资薪金", 1, 0.0, 10000.0),
+                    ("year_end_bonus", "年终奖", 1, 0.0, 1200.0),
+                    ("government_subsidy", "政府补贴", 1, 0.0, 800.0),
+                    ("stock_income", "股票收益", 1, 0.0, 200.0),
+                ],
+            )
+            add_bill_from_run(root, profile_id, "run_income_breakdown")
+
+            result = build_profile_review(root, profile_id, year=2026, months=12)
+            overview = result["overview"]
+            points = result["monthly_points"]
+            self.assertEqual(len(points), 1)
+
+            self.assertAlmostEqual(float(overview["total_income"]), 12200.0, places=4)
+            self.assertAlmostEqual(float(overview["salary_income"]), 11200.0, places=4)
+            self.assertAlmostEqual(float(overview["subsidy_income"]), 800.0, places=4)
+            self.assertAlmostEqual(float(overview["other_income"]), 200.0, places=4)
+            self.assertAlmostEqual(
+                float(overview["salary_income"])
+                + float(overview["subsidy_income"])
+                + float(overview["other_income"]),
+                float(overview["total_income"]),
+                places=4,
+            )
+            self.assertAlmostEqual(float(points[0]["salary_income"]), 11200.0, places=4)
+            self.assertAlmostEqual(float(points[0]["subsidy_income"]), 800.0, places=4)
+            self.assertAlmostEqual(float(points[0]["other_income"]), 200.0, places=4)
 
     def test_profile_review_api(self) -> None:
         if TestClient is None:

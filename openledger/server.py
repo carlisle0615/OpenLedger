@@ -359,6 +359,9 @@ class ProfileReviewOverviewModel(ResponseModel):
     net: float
     period_count: int
     anomaly_count: int
+    salary_income: float
+    subsidy_income: float
+    other_income: float
 
 
 class ReviewMonthlyPointModel(ResponseModel):
@@ -371,6 +374,9 @@ class ReviewMonthlyPointModel(ResponseModel):
     tx_count: int
     mom_expense_rate: float | None = None
     yoy_expense_rate: float | None = None
+    salary_income: float
+    subsidy_income: float
+    other_income: float
 
 
 class ReviewYearlyPointModel(ResponseModel):

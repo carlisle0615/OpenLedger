@@ -154,6 +154,9 @@ export type ReviewOverview = {
     net: number;
     period_count: number;
     anomaly_count: number;
+    salary_income: number;
+    subsidy_income: number;
+    other_income: number;
 };
 
 export type ReviewMonthlyPoint = {
@@ -166,6 +169,9 @@ export type ReviewMonthlyPoint = {
     tx_count: number;
     mom_expense_rate: number | null;
     yoy_expense_rate: number | null;
+    salary_income: number;
+    subsidy_income: number;
+    other_income: number;
 };
 
 export type ReviewYearlyPoint = {

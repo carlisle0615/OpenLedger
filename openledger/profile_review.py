@@ -140,6 +140,91 @@ def _issue_label(issue: str) -> str:
     return issue
 
 
+_SALARY_CATEGORY_IDS = {"salary_wages", "year_end_bonus"}
+_SUBSIDY_CATEGORY_IDS = {"government_subsidy"}
+_SALARY_ID_HINTS = ("salary", "wage", "payroll", "bonus")
+_SUBSIDY_ID_HINTS = ("subsidy", "allowance", "benefit", "housing_fund")
+_SALARY_NAME_HINTS = ("工资", "薪资", "薪金", "薪酬", "奖金")
+_SUBSIDY_NAME_HINTS = ("补贴", "津贴", "补助", "公积金")
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def _income_bucket(category_id: str, category_name: str) -> str:
+    category_id_norm = str(category_id or "").strip().lower()
+    category_name_norm = str(category_name or "").strip().lower()
+
+    if category_id_norm in _SALARY_CATEGORY_IDS:
+        return "salary"
+    if category_id_norm in _SUBSIDY_CATEGORY_IDS:
+        return "subsidy"
+
+    if _contains_any(category_id_norm, _SUBSIDY_ID_HINTS) or _contains_any(
+        category_name_norm, _SUBSIDY_NAME_HINTS
+    ):
+        return "subsidy"
+    if _contains_any(category_id_norm, _SALARY_ID_HINTS) or _contains_any(
+        category_name_norm, _SALARY_NAME_HINTS
+    ):
+        return "salary"
+    return "other"
+
+
+def _build_income_breakdown(bills: list[_BillMetrics]) -> dict[str, float]:
+    salary_income = 0.0
+    subsidy_income = 0.0
+    other_income = 0.0
+
+    for bill in bills:
+        for category_id, amount in bill.category_income.items():
+            value = float(amount)
+            if value <= 0:
+                continue
+            category_name = bill.category_names.get(category_id, category_id)
+            bucket = _income_bucket(category_id, category_name)
+            if bucket == "salary":
+                salary_income += value
+            elif bucket == "subsidy":
+                subsidy_income += value
+            else:
+                other_income += value
+
+    return {
+        "salary_income": _round2(salary_income),
+        "subsidy_income": _round2(subsidy_income),
+        "other_income": _round2(other_income),
+    }
+
+
+def _build_monthly_income_breakdown(
+    bills: list[_BillMetrics],
+) -> dict[tuple[int, int], dict[str, float]]:
+    monthly: dict[tuple[int, int], dict[str, float]] = {}
+    for bill in bills:
+        if bill.year is None or bill.month is None:
+            continue
+        key = (bill.year, bill.month)
+        slot = monthly.get(key)
+        if slot is None:
+            slot = {"salary_income": 0.0, "subsidy_income": 0.0, "other_income": 0.0}
+            monthly[key] = slot
+        for category_id, amount in bill.category_income.items():
+            value = float(amount)
+            if value <= 0:
+                continue
+            category_name = bill.category_names.get(category_id, category_id)
+            bucket = _income_bucket(category_id, category_name)
+            if bucket == "salary":
+                slot["salary_income"] += value
+            elif bucket == "subsidy":
+                slot["subsidy_income"] += value
+            else:
+                slot["other_income"] += value
+    return monthly
+
+
 def _normalize_bill(raw_bill: _RawBill) -> _BillMetrics:
     totals = raw_bill.totals
     income, expense = _inflow_outflow(
@@ -330,6 +415,7 @@ def build_profile_review(
     all_monthly = _aggregate_monthly(complete_bills)
     scoped_monthly = _aggregate_monthly(scoped_complete_bills)
     all_monthly_map = {(item.year, item.month): item for item in all_monthly}
+    monthly_income_breakdown = _build_monthly_income_breakdown(scoped_complete_bills)
 
     monthly_points_full: list[dict[str, object]] = []
     for idx, item in enumerate(scoped_monthly):
@@ -343,6 +429,7 @@ def build_profile_review(
         if yoy_item and yoy_item.expense > 0:
             yoy_rate = _round4((item.expense - yoy_item.expense) / yoy_item.expense)
 
+        income_detail = monthly_income_breakdown.get((item.year, item.month), {})
         monthly_points_full.append(
             {
                 "period_key": item.period_key
@@ -355,6 +442,11 @@ def build_profile_review(
                 "tx_count": int(item.tx_count),
                 "mom_expense_rate": mom_rate,
                 "yoy_expense_rate": yoy_rate,
+                "salary_income": _round2(float(income_detail.get("salary_income", 0.0))),
+                "subsidy_income": _round2(
+                    float(income_detail.get("subsidy_income", 0.0))
+                ),
+                "other_income": _round2(float(income_detail.get("other_income", 0.0))),
                 "_run_id": item.run_id,
                 "_top_share": _round4(
                     max(item.category_expense.values()) / item.expense
@@ -523,12 +615,17 @@ def build_profile_review(
         for issue in raw_integrity.issues
     ]
 
+    income_breakdown = _build_income_breakdown(scoped_bills)
+
     overview = {
         "total_expense": _round2(sum(item.expense for item in scoped_bills)),
         "total_income": _round2(sum(item.income for item in scoped_bills)),
         "net": _round2(sum(item.net for item in scoped_bills)),
         "period_count": len(scoped_monthly),
         "anomaly_count": len(anomalies),
+        "salary_income": float(income_breakdown["salary_income"]),
+        "subsidy_income": float(income_breakdown["subsidy_income"]),
+        "other_income": float(income_breakdown["other_income"]),
     }
 
     monthly_points = [
@@ -542,6 +639,9 @@ def build_profile_review(
             "tx_count": int(item["tx_count"]),
             "mom_expense_rate": item["mom_expense_rate"],
             "yoy_expense_rate": item["yoy_expense_rate"],
+            "salary_income": float(item["salary_income"]),
+            "subsidy_income": float(item["subsidy_income"]),
+            "other_income": float(item["other_income"]),
         }
         for item in monthly_points_display
     ]

@@ -7,6 +7,8 @@ import { ProfileReviewResponse } from "@/types";
 import { api } from "@/utils/helpers";
 import { ReviewAnomalyTable } from "@/components/profile-review/ReviewAnomalyTable";
 import { ReviewDonutChart } from "@/components/profile-review/ReviewDonutChart";
+import { IncomePieChart } from "@/components/profile-review/IncomePieChart";
+import { IncomeTrendChart } from "@/components/profile-review/IncomeTrendChart";
 import { ReviewKpiCards } from "@/components/profile-review/ReviewKpiCards";
 import { ReviewTrendChart } from "@/components/profile-review/ReviewTrendChart";
 
@@ -248,6 +250,15 @@ export function ProfileReviewTab({
             {data ? (
                 <>
                     <ReviewKpiCards overview={data.overview} />
+
+                    <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+                        <div className="xl:col-span-5">
+                            <IncomePieChart overview={data.overview} />
+                        </div>
+                        <div className="xl:col-span-7">
+                            <IncomeTrendChart points={data.monthly_points} />
+                        </div>
+                    </div>
 
                     <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
                         <div className="xl:col-span-5">
