@@ -174,7 +174,7 @@ function asIgnoreRules(value: unknown): IgnoreRule[] {
 function asRegexRules(value: unknown): RegexCategoryRule[] {
     if (!Array.isArray(value)) return [];
     return value
-        .map((item, index) => {
+        .map((item, index): RegexCategoryRule | null => {
             if (!isObject(item)) return null;
             return {
                 id: asString(item.id).trim() || `regex_rule_${index + 1}`,
