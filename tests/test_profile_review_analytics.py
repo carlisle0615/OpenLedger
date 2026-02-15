@@ -259,6 +259,12 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
                 item for item in monthly_points if item["year"] == 2026 and item["month"] == 1
             )
             self.assertAlmostEqual(float(jan_2026["yoy_expense_rate"]), 0.25, places=4)
+            self.assertTrue(
+                any(
+                    str(item.get("category_id")) == "dining"
+                    for item in jan_2026["category_expense_breakdown"]
+                )
+            )
             feb_2026 = next(
                 item for item in monthly_points if item["year"] == 2026 and item["month"] == 2
             )
@@ -321,6 +327,13 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
             self.assertAlmostEqual(float(points[0]["salary_income"]), 0.0, places=4)
             self.assertAlmostEqual(float(points[0]["subsidy_income"]), 0.0, places=4)
             self.assertAlmostEqual(float(points[0]["other_income"]), 230.0, places=4)
+            self.assertEqual(len(points[0]["category_expense_breakdown"]), 1)
+            self.assertEqual(points[0]["category_expense_breakdown"][0]["category_id"], "other")
+            self.assertAlmostEqual(
+                float(points[0]["category_expense_breakdown"][0]["expense"]),
+                100.0,
+                places=4,
+            )
 
     def test_review_income_breakdown_salary_and_subsidy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -377,6 +390,7 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
                 self.assertIn("overview", payload)
                 self.assertIn("monthly_points", payload)
                 self.assertIn("anomalies", payload)
+                self.assertIn("category_expense_breakdown", payload["monthly_points"][0])
 
                 not_found_resp = client.get("/api/profiles/not_exists/review")
                 self.assertEqual(not_found_resp.status_code, 404)

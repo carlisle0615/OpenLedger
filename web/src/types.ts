@@ -172,6 +172,13 @@ export type ReviewMonthlyPoint = {
     salary_income: number;
     subsidy_income: number;
     other_income: number;
+    category_expense_breakdown: ReviewMonthlyCategoryExpense[];
+};
+
+export type ReviewMonthlyCategoryExpense = {
+    category_id: string;
+    category_name: string;
+    expense: number;
 };
 
 export type ReviewYearlyPoint = {

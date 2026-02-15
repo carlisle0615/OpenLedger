@@ -225,6 +225,16 @@ def _build_monthly_income_breakdown(
     return monthly
 
 
+def _build_category_name_map(bills: list[_BillMetrics]) -> dict[str, str]:
+    output: dict[str, str] = {}
+    for bill in bills:
+        for category_id, category_name in bill.category_names.items():
+            cid = str(category_id or "").strip() or "other"
+            cname = str(category_name or "").strip() or cid
+            output[cid] = cname
+    return output
+
+
 def _normalize_bill(raw_bill: _RawBill) -> _BillMetrics:
     totals = raw_bill.totals
     income, expense = _inflow_outflow(
@@ -416,6 +426,7 @@ def build_profile_review(
     scoped_monthly = _aggregate_monthly(scoped_complete_bills)
     all_monthly_map = {(item.year, item.month): item for item in all_monthly}
     monthly_income_breakdown = _build_monthly_income_breakdown(scoped_complete_bills)
+    category_name_map = _build_category_name_map(scoped_bills)
 
     monthly_points_full: list[dict[str, object]] = []
     for idx, item in enumerate(scoped_monthly):
@@ -430,6 +441,19 @@ def build_profile_review(
             yoy_rate = _round4((item.expense - yoy_item.expense) / yoy_item.expense)
 
         income_detail = monthly_income_breakdown.get((item.year, item.month), {})
+        category_expense_breakdown = [
+            {
+                "category_id": str(category_id),
+                "category_name": str(category_name_map.get(category_id, category_id)),
+                "expense": _round2(float(value)),
+            }
+            for category_id, value in sorted(
+                item.category_expense.items(),
+                key=lambda pair: pair[1],
+                reverse=True,
+            )
+            if float(value) > 0
+        ]
         monthly_points_full.append(
             {
                 "period_key": item.period_key
@@ -447,6 +471,7 @@ def build_profile_review(
                     float(income_detail.get("subsidy_income", 0.0))
                 ),
                 "other_income": _round2(float(income_detail.get("other_income", 0.0))),
+                "category_expense_breakdown": category_expense_breakdown,
                 "_run_id": item.run_id,
                 "_top_share": _round4(
                     max(item.category_expense.values()) / item.expense
@@ -642,6 +667,7 @@ def build_profile_review(
             "salary_income": float(item["salary_income"]),
             "subsidy_income": float(item["subsidy_income"]),
             "other_income": float(item["other_income"]),
+            "category_expense_breakdown": list(item["category_expense_breakdown"]),
         }
         for item in monthly_points_display
     ]

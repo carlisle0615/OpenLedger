@@ -377,6 +377,15 @@ class ReviewMonthlyPointModel(ResponseModel):
     salary_income: float
     subsidy_income: float
     other_income: float
+    category_expense_breakdown: list["ReviewMonthlyCategoryExpenseModel"] = Field(
+        default_factory=list
+    )
+
+
+class ReviewMonthlyCategoryExpenseModel(ResponseModel):
+    category_id: str
+    category_name: str
+    expense: float
 
 
 class ReviewYearlyPointModel(ResponseModel):

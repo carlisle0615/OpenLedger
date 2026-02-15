@@ -1,4 +1,6 @@
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ReviewMonthlyPoint } from "@/types";
 
 interface ReviewTrendChartProps {
@@ -26,29 +28,74 @@ const YEAR_COLORS = [
     "#0891b2", // cyan-600
 ];
 
+const ALL_CATEGORY = "__all__";
+
+function pointExpenseByCategory(point: ReviewMonthlyPoint, categoryId: string): number {
+    if (categoryId === ALL_CATEGORY) {
+        return Number(point.expense) || 0;
+    }
+    const hit = point.category_expense_breakdown.find((item) => item.category_id === categoryId);
+    return Number(hit?.expense || 0);
+}
+
 export function ReviewTrendChart({ points }: ReviewTrendChartProps) {
-    // 1. Group data by year
-    const pointsByYear = new Map<number, ReviewMonthlyPoint[]>();
-    points.forEach((p) => {
-        if (!pointsByYear.has(p.year)) {
-            pointsByYear.set(p.year, []);
-        }
-        pointsByYear.get(p.year)?.push(p);
-    });
+    const [categoryFilter, setCategoryFilter] = useState<string>(ALL_CATEGORY);
+
+    const categoryOptions = useMemo(() => {
+        const rows = new Map<string, { id: string; name: string; total: number }>();
+        points.forEach((point) => {
+            point.category_expense_breakdown.forEach((item) => {
+                const existing = rows.get(item.category_id);
+                if (existing) {
+                    existing.total += Number(item.expense) || 0;
+                    if (!existing.name && item.category_name) {
+                        existing.name = item.category_name;
+                    }
+                } else {
+                    rows.set(item.category_id, {
+                        id: item.category_id,
+                        name: item.category_name || item.category_id,
+                        total: Number(item.expense) || 0,
+                    });
+                }
+            });
+        });
+        return Array.from(rows.values()).sort((a, b) => b.total - a.total);
+    }, [points]);
+
+    const activeCategory = useMemo(() => {
+        if (categoryFilter === ALL_CATEGORY) return ALL_CATEGORY;
+        return categoryOptions.some((item) => item.id === categoryFilter) ? categoryFilter : ALL_CATEGORY;
+    }, [categoryFilter, categoryOptions]);
+
+    const activeCategoryLabel = useMemo(() => {
+        if (activeCategory === ALL_CATEGORY) return "全部分类";
+        const hit = categoryOptions.find((item) => item.id === activeCategory);
+        return hit?.name || activeCategory;
+    }, [activeCategory, categoryOptions]);
+
+    const pointsByYear = useMemo(() => {
+        const grouped = new Map<number, ReviewMonthlyPoint[]>();
+        points.forEach((point) => {
+            if (!grouped.has(point.year)) {
+                grouped.set(point.year, []);
+            }
+            grouped.get(point.year)?.push(point);
+        });
+        return grouped;
+    }, [points]);
 
     const years = Array.from(pointsByYear.keys()).sort((a, b) => a - b);
 
-    // Calculate global max value for scaling
     let maxVal = 0;
-    years.forEach(year => {
+    years.forEach((year) => {
         const yearPoints = pointsByYear.get(year) || [];
-        yearPoints.forEach(p => {
-            maxVal = Math.max(maxVal, p.expense); // Currently focusing on Expense trend
+        yearPoints.forEach((point) => {
+            maxVal = Math.max(maxVal, pointExpenseByCategory(point, activeCategory));
         });
     });
     maxVal = Math.max(1, maxVal);
 
-    // Chart dimensions
     const width = 720;
     const height = 280;
     const left = 42;
@@ -59,75 +106,59 @@ export function ReviewTrendChart({ points }: ReviewTrendChartProps) {
     const chartH = height - top - bottom;
     const baseY = top + chartH;
 
-    // X-axis: 12 months
-    const step = chartW / 11; // 0 to 11 index for 12 months
-    const xAt = (monthIdx: number) => left + step * monthIdx; // monthIdx 0-11
+    const step = chartW / 11;
+    const xAt = (monthIdx: number) => left + step * monthIdx;
     const yAt = (value: number) => top + (1 - value / maxVal) * chartH;
 
-    // Generate paths for each year
     const paths = years.map((year, i) => {
-        const yearPoints = pointsByYear.get(year) || [];
+        const yearPoints = [...(pointsByYear.get(year) || [])].sort((a, b) => a.month - b.month);
         const color = YEAR_COLORS[i % YEAR_COLORS.length];
-
-        // Fill missing months with null or 0 ? 
-        // For line chart, we want 0 if we assume explicit 0 expense, 
-        // but if data is missing, maybe we just skip? 
-        // The previous step ensured we have data for known ranges, but this is a fresh view.
-        // Let's assume we plot 1-12. If a month is missing in data, treat as 0 or ignore?
-        // Since we did a "fill missing" previously, the `points` prop might already have gaps filled
-        // BUT, that was for a linear timeline.
-        // Here, let's just map 1-12.
 
         const pathCommands: string[] = [];
         let hasStarted = false;
-
-        // Sort points by month just in case
-        yearPoints.sort((a, b) => a.month - b.month);
-
-        // We create a map for quick lookup
         const monthMap = new Map<number, number>();
-        yearPoints.forEach(p => monthMap.set(p.month, p.expense));
+        yearPoints.forEach((point) =>
+            monthMap.set(point.month, pointExpenseByCategory(point, activeCategory)),
+        );
 
         for (let m = 1; m <= 12; m++) {
-            const val = monthMap.get(m);
-            if (val !== undefined) {
-                const x = xAt(m - 1);
-                const y = yAt(val);
-                if (!hasStarted) {
-                    pathCommands.push(`M ${x.toFixed(2)} ${y.toFixed(2)}`);
-                    hasStarted = true;
-                } else {
-                    pathCommands.push(`L ${x.toFixed(2)} ${y.toFixed(2)}`);
-                }
+            const val = monthMap.get(m) ?? 0;
+            const x = xAt(m - 1);
+            const y = yAt(val);
+            if (!hasStarted) {
+                pathCommands.push(`M ${x.toFixed(2)} ${y.toFixed(2)}`);
+                hasStarted = true;
             } else {
-                // If specific month is missing, we could break the line or assume 0.
-                // Assuming 0 is safer for "Trends" so lines don't break.
-                // However, strictly "no data" might be better represented by gaps if the future hasn't happened.
-                // But for past data, 0 is likely implementation. 
-                // Let's assume 0 for now to keep lines continuous.
-                const x = xAt(m - 1);
-                const y = yAt(0);
-                if (!hasStarted) {
-                    pathCommands.push(`M ${x.toFixed(2)} ${y.toFixed(2)}`);
-                    hasStarted = true;
-                } else {
-                    pathCommands.push(`L ${x.toFixed(2)} ${y.toFixed(2)}`);
-                }
+                pathCommands.push(`L ${x.toFixed(2)} ${y.toFixed(2)}`);
             }
         }
-
         return {
             year,
             d: pathCommands.join(" "),
             color,
-            points: yearPoints
+            monthMap,
         };
     });
 
     return (
         <Card className="h-full border border-border/80 shadow-sm">
-            <CardHeader className="py-3">
+            <CardHeader className="py-3 flex flex-row items-center justify-between gap-3">
                 <CardTitle className="text-sm">月度支出趋势（同比）</CardTitle>
+                <Select value={activeCategory} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className="h-8 text-xs w-[180px]">
+                        <SelectValue placeholder="分类筛选" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value={ALL_CATEGORY} className="text-xs">
+                            全部分类
+                        </SelectItem>
+                        {categoryOptions.map((item) => (
+                            <SelectItem key={item.id} value={item.id} className="text-xs">
+                                {item.name}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
             </CardHeader>
             <CardContent className="space-y-3">
                 {!points.length ? (
@@ -189,14 +220,9 @@ export function ReviewTrendChart({ points }: ReviewTrendChartProps) {
 
                                 {/* Points */}
                                 {paths.map((p) => {
-                                    // Re-calculate points for circles
-                                    const monthMap = new Map<number, number>();
-                                    p.points.forEach(pt => monthMap.set(pt.month, pt.expense));
-
                                     return Array.from({ length: 12 }).map((_, i) => {
                                         const m = i + 1;
-                                        const val = monthMap.get(m) || 0;
-                                        // Only draw circle if data explicitly existed or handled
+                                        const val = p.monthMap.get(m) || 0;
                                         return (
                                             <circle
                                                 key={`${p.year}-${m}`}
@@ -207,7 +233,7 @@ export function ReviewTrendChart({ points }: ReviewTrendChartProps) {
                                                 stroke={p.color}
                                                 strokeWidth="1.5"
                                             >
-                                                <title>{`${p.year}年${m}月: ${fmtMoney(val)}`}</title>
+                                                <title>{`${p.year}年${m}月 ${activeCategoryLabel}: ${fmtMoney(val)}`}</title>
                                             </circle>
                                         );
                                     })
@@ -215,7 +241,6 @@ export function ReviewTrendChart({ points }: ReviewTrendChartProps) {
                             </svg>
                         </div>
 
-                        {/* Legend */}
                         <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground justify-center mt-2">
                             {paths.map(p => (
                                 <div key={p.year} className="inline-flex items-center gap-1.5">
@@ -223,6 +248,9 @@ export function ReviewTrendChart({ points }: ReviewTrendChartProps) {
                                     <span>{p.year}年</span>
                                 </div>
                             ))}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground text-center">
+                            Legend: 颜色代表年份，当前分类为 {activeCategoryLabel}
                         </div>
                     </>
                 )}
