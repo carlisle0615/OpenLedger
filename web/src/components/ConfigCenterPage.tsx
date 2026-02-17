@@ -333,9 +333,9 @@ function rowsToAliasMap(rows: CardAliasRow[]): Record<string, string[]> {
 
 function classifierConfigPath(useCacheBust: boolean): string {
     if (!useCacheBust) {
-        return "/api/config/classifier";
+        return "/api/v2/config/classifier";
     }
-    return `/api/config/classifier?_ts=${Date.now()}`;
+    return `/api/v2/config/classifier?_ts=${Date.now()}`;
 }
 
 function TextListEditor(props: {
@@ -589,7 +589,7 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
         setSuccess("");
         try {
             const payload = configWithAliases(config);
-            await api<{ ok: boolean }>(baseUrl, "/api/config/classifier", {
+            await api<{ ok: boolean }>(baseUrl, "/api/v2/config/classifier", {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
@@ -631,7 +631,7 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
         try {
             const aliasMap = rowsToAliasMap(cardAliasRows);
             const payload = { ...config, debit_card_aliases: aliasMap };
-            await api<{ ok: boolean }>(baseUrl, "/api/config/classifier", {
+            await api<{ ok: boolean }>(baseUrl, "/api/v2/config/classifier", {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
@@ -673,7 +673,7 @@ export function ConfigCenterPage({ baseUrl }: { baseUrl: string }) {
                         <div>
                             <CardTitle className="text-base">配置中心</CardTitle>
                             <div className="text-xs text-muted-foreground mt-1">
-                                可视化调整全局分类配置（`/api/config/classifier`）。
+                                可视化调整全局分类配置（`/api/v2/config/classifier`）。
                                 {loadedAt ? ` 最近加载：${loadedAt}` : ""}
                             </div>
                         </div>

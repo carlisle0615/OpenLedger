@@ -122,8 +122,8 @@ UI 支持：
 ## 当前架构（简版）
 
 - 前端：React + TypeScript + Vite（`web/`）
-- 后端：FastAPI（`openledger/server.py`）
-- 编排：`openledger/workflow.py` 调度 `stages/`（Python + Node）
+- 后端：FastAPI（`openledger/api/app.py`，`openledger/server.py` 为兼容入口）
+- 编排：`openledger/infrastructure/workflow/runtime.py` 调度 `stages/`（Python + Node）
 - 存储：
   - 运行态：`runs/<run_id>/state.json` + `inputs/output/logs/config`
   - 归档态：`profiles.db`（`profiles / bills / run_bindings`）
@@ -162,6 +162,7 @@ uv run python -m tools.probe_pdf <pdf路径> --max-pages 2 --render-pages 1
 uv run python -m tools.probe_inputs --wechat <xlsx> --alipay <csv>
 uv run python -m tools.batch_ignore_review_before_date --review <path> --cutoff 2024-01-01
 uv run python -m tools.scaffold_pdf_parser --mode-id boc --mode-name "中国银行（信用卡/流水）" --kinds boc_credit_card,boc_statement
+uv run python tools/audit_functional_migration_diff.py --base-ref HEAD
 ```
 
 ## 隐私与安全

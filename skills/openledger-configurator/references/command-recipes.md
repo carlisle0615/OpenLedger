@@ -103,7 +103,7 @@ done
 python - <<'PY'
 from pathlib import Path
 import json
-from openledger.profiles import add_bill_from_run
+from openledger.infrastructure.persistence.sqlalchemy.profile_store import add_bill_from_run
 root=Path('.').resolve()
 profile_id='profile_e323bc'
 run_ids=['rid1','rid2']

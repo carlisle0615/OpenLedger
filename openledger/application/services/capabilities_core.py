@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
-from .parsers.pdf import PdfParser, iter_pdf_parsers
-from .state import utc_now_iso
+from openledger.parsers.pdf import PdfParser, iter_pdf_parsers
+from openledger.state import utc_now_iso
 
 
 class SourceSupportItem(TypedDict):

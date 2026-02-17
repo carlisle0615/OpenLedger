@@ -17,10 +17,30 @@ export async function api<T>(baseUrl: string, path: string, init?: RequestInit):
     const headers = new Headers(init?.headers || undefined);
     const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
     if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`HTTP ${res.status}: ${txt.slice(0, 3000)}`);
+        let message = "";
+        try {
+            const payload = await res.json() as {
+                error?: { code?: string; message?: string; details?: unknown };
+                request_id?: string;
+            };
+            const code = String(payload.error?.code ?? "").trim();
+            const msg = String(payload.error?.message ?? "").trim();
+            const rid = String(payload.request_id ?? "").trim();
+            message = [code, msg, rid ? `request_id=${rid}` : ""].filter(Boolean).join(" | ");
+        } catch {
+            const txt = await res.text();
+            message = txt.slice(0, 3000);
+        }
+        throw new Error(`HTTP ${res.status}: ${message}`);
     }
-    return (await res.json()) as T;
+    const payload = await res.json() as {
+        data?: T;
+        meta?: { request_id?: string };
+    } | T;
+    if (payload && typeof payload === "object" && "data" in payload) {
+        return (payload as { data: T }).data;
+    }
+    return payload as T;
 }
 
 // 文件类型判断

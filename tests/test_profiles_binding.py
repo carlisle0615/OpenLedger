@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openledger.profiles import (
+from openledger.infrastructure.persistence.sqlalchemy.profile_store import (
     add_bill_from_run,
     create_profile,
     get_run_binding,
@@ -13,7 +13,7 @@ from openledger.profiles import (
 )
 
 
-def _write_run(root: Path, run_id: str, *, year: int, month: int, profile_id: str = "") -> None:
+def _write_run(root: Path, run_id: str, *, year: int, month: int) -> None:
     run_dir = root / "runs" / run_id
     out_dir = run_dir / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -25,7 +25,6 @@ def _write_run(root: Path, run_id: str, *, year: int, month: int, profile_id: st
             "period_day": 20,
             "period_year": year,
             "period_month": month,
-            "profile_id": profile_id,
         },
     }
     (run_dir / "state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
@@ -162,26 +161,6 @@ class ProfileBindingTests(unittest.TestCase):
             set_run_binding(root, "run_a", alice["id"])
             with self.assertRaises(ValueError):
                 add_bill_from_run(root, bob["id"], "run_a")
-
-    def test_get_run_binding_backfills_from_legacy_state_profile_id(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            alice = create_profile(root, "Alice")
-            _write_run(root, "run_a", year=2026, month=1, profile_id=alice["id"])
-            loaded = get_run_binding(root, "run_a")
-            self.assertIsNotNone(loaded)
-            assert loaded is not None
-            self.assertEqual(loaded["profile_id"], alice["id"])
-            db = root / "profiles.db"
-            with sqlite3.connect(db) as conn:
-                row = conn.execute(
-                    "SELECT profile_id FROM run_bindings WHERE run_id = ?",
-                    ("run_a",),
-                ).fetchone()
-            self.assertIsNotNone(row)
-            assert row is not None
-            self.assertEqual(str(row[0]), alice["id"])
-
 
 if __name__ == "__main__":
     unittest.main()

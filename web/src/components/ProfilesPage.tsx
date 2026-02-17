@@ -85,7 +85,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
         setLoadingProfile(true);
         setError("");
         try {
-            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(id)}`);
+            const profile = await api<Profile>(baseUrl, `/api/v2/profiles/${encodeURIComponent(id)}`);
             setSelected(profile);
             setIntegrityIssues([]);
             setIntegrityCheckedAt("");
@@ -100,7 +100,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
     async function loadRunCandidates() {
         if (!baseUrl.trim()) return;
         try {
-            const payload = await api<{ runs: string[]; runs_meta?: RunMeta[] }>(baseUrl, "/api/runs");
+            const payload = await api<{ runs: string[]; runs_meta?: RunMeta[] }>(baseUrl, "/api/v2/runs");
             const fallbackMeta = Array.isArray(payload.runs)
                 ? payload.runs.map((id) => ({ id, name: "" }))
                 : [];
@@ -118,7 +118,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
         setIntegrityLoading(true);
         setError("");
         try {
-            const res = await api<ProfileIntegrityResult>(baseUrl, `/api/profiles/${encodeURIComponent(selectedProfileId)}/check`);
+            const res = await api<ProfileIntegrityResult>(baseUrl, `/api/v2/profiles/${encodeURIComponent(selectedProfileId)}/check`);
             setIntegrityIssues(Array.isArray(res.issues) ? res.issues : []);
             setIntegrityCheckedAt(new Date().toISOString());
         } catch (e) {
@@ -181,7 +181,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
                 payload.period_year = null;
                 payload.period_month = null;
             }
-            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(selectedProfileId)}/bills`, {
+            const profile = await api<Profile>(baseUrl, `/api/v2/profiles/${encodeURIComponent(selectedProfileId)}/bills`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
@@ -213,7 +213,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
         setLoadingProfile(true);
         setError("");
         try {
-            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(selectedProfileId)}/bills/remove`, {
+            const profile = await api<Profile>(baseUrl, `/api/v2/profiles/${encodeURIComponent(selectedProfileId)}/bills/remove`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(periodKey ? { period_key: periodKey } : { run_id: billRunId }),
@@ -239,7 +239,7 @@ export function ProfilesPage({ baseUrl, runId, currentProfileId, busy, setRunPro
         setLoadingProfile(true);
         setError("");
         try {
-            const profile = await api<Profile>(baseUrl, `/api/profiles/${encodeURIComponent(selectedProfileId)}/bills/reimport`, {
+            const profile = await api<Profile>(baseUrl, `/api/v2/profiles/${encodeURIComponent(selectedProfileId)}/bills/reimport`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ period_key: periodKey, run_id: runId }),

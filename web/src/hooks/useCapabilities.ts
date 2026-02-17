@@ -67,7 +67,7 @@ export function useCapabilities(baseUrl: string, runState?: { inputs: { name: st
         try {
             // 优先尝试聚合接口
             try {
-                const res = await api<CapabilitiesPayload>(baseUrl, "/api/capabilities");
+                const res = await api<CapabilitiesPayload>(baseUrl, "/api/v2/capabilities");
                 if (mounted.current) {
                     setSourceMatrix(res.source_support_matrix);
                     setParserHealth(res.pdf_parser_health);
@@ -76,10 +76,10 @@ export function useCapabilities(baseUrl: string, runState?: { inputs: { name: st
             } catch (e) {
                 console.warn("Fetch capabilities aggregate failed, fallback to individual endpoints", e);
                 // 降级：分别请求
-                // 注意：/api/sources/support 返回 { sources: [...] }
+                // 注意：/api/v2/sources/support 返回 { sources: [...] }
                 const [p1, p2] = await Promise.allSettled([
-                    api<{ sources: SourceSupportItem[] }>(baseUrl, "/api/sources/support"),
-                    api<PdfParserHealthResponse>(baseUrl, "/api/parsers/pdf/health"),
+                    api<{ sources: SourceSupportItem[] }>(baseUrl, "/api/v2/sources/support"),
+                    api<PdfParserHealthResponse>(baseUrl, "/api/v2/parsers/pdf/health"),
                 ]);
 
                 if (mounted.current) {

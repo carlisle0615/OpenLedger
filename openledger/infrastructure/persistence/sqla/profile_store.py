@@ -6,12 +6,19 @@ import json
 import os
 import re
 import secrets
-import sqlite3
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
-from .state import load_json, safe_rel_path, utc_now_iso
+from sqlalchemy.engine import Connection
+
+from openledger.infrastructure.persistence.sqla.engine import get_engine
+from openledger.infrastructure.persistence.sqla.repositories import (
+    ensure_profiles_schema,
+)
+from openledger.infrastructure.persistence.sqla.session import connection_scope
+from openledger.state import load_json, safe_rel_path, utc_now_iso
 
 _MISSING = object()
 
@@ -26,66 +33,42 @@ def _db_path(root: Path) -> Path:
     return path
 
 
-def _connect(root: Path) -> sqlite3.Connection:
+class _CompatCursor:
+    def __init__(self, result: Any) -> None:
+        self._result = result
+
+    def fetchone(self) -> dict[str, Any] | None:
+        row = self._result.fetchone()
+        if row is None:
+            return None
+        return dict(row._mapping)
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return [dict(row._mapping) for row in self._result.fetchall()]
+
+
+class _CompatConnection:
+    def __init__(self, conn: Connection) -> None:
+        self._conn = conn
+
+    @property
+    def raw(self) -> Connection:
+        return self._conn
+
+    def execute(self, sql: str, args: Iterable[Any] = ()) -> _CompatCursor:
+        return _CompatCursor(self._conn.exec_driver_sql(sql, tuple(args)))
+
+
+@contextmanager
+def _connect(root: Path):
     db_path = _db_path(root)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    engine = get_engine(db_path)
+    with connection_scope(engine) as conn:
+        yield _CompatConnection(conn)
 
 
-def _init_db(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS profiles (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            created_at TEXT,
-            updated_at TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS bills (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            profile_id TEXT NOT NULL,
-            run_id TEXT NOT NULL,
-            period_key TEXT,
-            year INTEGER,
-            month INTEGER,
-            period_mode TEXT,
-            period_day INTEGER,
-            period_start TEXT,
-            period_end TEXT,
-            period_label TEXT,
-            cross_month INTEGER,
-            created_at TEXT,
-            updated_at TEXT,
-            outputs_json TEXT,
-            UNIQUE(profile_id, run_id),
-            FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS run_bindings (
-            run_id TEXT PRIMARY KEY,
-            profile_id TEXT NOT NULL,
-            created_at TEXT,
-            updated_at TEXT,
-            FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-        )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bills_profile_period ON bills(profile_id, period_key)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_run_bindings_profile ON run_bindings(profile_id)"
-    )
+def _init_db(conn: _CompatConnection) -> None:
+    ensure_profiles_schema(conn.raw)
 
 
 def _slugify(value: str) -> str:
@@ -143,7 +126,9 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _extract_period(state: dict[str, Any]) -> tuple[int | None, int | None, str, int, str]:
+def _extract_period(
+    state: dict[str, Any],
+) -> tuple[int | None, int | None, str, int, str]:
     opts = state.get("options", {}) if isinstance(state.get("options"), dict) else {}
     year = _to_int(opts.get("period_year"))
     month = _to_int(opts.get("period_month"))
@@ -221,7 +206,9 @@ def _read_category_summary(path: Path) -> tuple[dict[str, float], list[dict[str,
     return totals, categories
 
 
-def _read_category_summary_from_categorized(path: Path) -> tuple[dict[str, float], list[dict[str, Any]]]:
+def _read_category_summary_from_categorized(
+    path: Path,
+) -> tuple[dict[str, float], list[dict[str, Any]]]:
     if not path.exists():
         return {}, []
 
@@ -241,8 +228,16 @@ def _read_category_summary_from_categorized(path: Path) -> tuple[dict[str, float
             if _to_bool(row.get("ignored")) or _to_bool(row.get("final_ignored")):
                 continue
             amount = _to_float(row.get("amount"))
-            category_id = str(row.get("category_id") or row.get("final_category_id") or "").strip() or "other"
-            category_name = str(row.get("category_name") or row.get("category") or "").strip() or category_id
+            category_id = (
+                str(
+                    row.get("category_id") or row.get("final_category_id") or ""
+                ).strip()
+                or "other"
+            )
+            category_name = (
+                str(row.get("category_name") or row.get("category") or "").strip()
+                or category_id
+            )
             flow = str(row.get("flow") or "").strip().lower()
 
             cat = grouped.get(category_id)
@@ -283,7 +278,10 @@ def _read_category_summary_from_categorized(path: Path) -> tuple[dict[str, float
     totals["net"] = totals.get("sum_amount", 0.0)
     categories = sorted(
         grouped.values(),
-        key=lambda item: (abs(float(item.get("sum_amount", 0.0))), str(item.get("category_id") or "")),
+        key=lambda item: (
+            abs(float(item.get("sum_amount", 0.0))),
+            str(item.get("category_id") or ""),
+        ),
         reverse=True,
     )
     return totals, categories
@@ -298,7 +296,11 @@ def _resolve_bill_outputs(
     summary_rel = str(outputs.get("summary_csv") or "").strip()
     categorized_rel = str(outputs.get("categorized_csv") or "").strip()
 
-    summary_path = (root / summary_rel) if summary_rel else run_dir / "output" / "category.summary.csv"
+    summary_path = (
+        (root / summary_rel)
+        if summary_rel
+        else run_dir / "output" / "category.summary.csv"
+    )
     categorized_path = (
         (root / categorized_rel)
         if categorized_rel
@@ -306,13 +308,19 @@ def _resolve_bill_outputs(
     )
 
     resolved_outputs = {
-        "summary_csv": safe_rel_path(root, summary_path) if summary_path.exists() else summary_rel,
-        "categorized_csv": safe_rel_path(root, categorized_path) if categorized_path.exists() else categorized_rel,
+        "summary_csv": safe_rel_path(root, summary_path)
+        if summary_path.exists()
+        else summary_rel,
+        "categorized_csv": safe_rel_path(root, categorized_path)
+        if categorized_path.exists()
+        else categorized_rel,
     }
     return resolved_outputs, summary_path, categorized_path
 
 
-def _recompute_bill_metrics(summary_path: Path, categorized_path: Path) -> tuple[dict[str, float], list[dict[str, Any]]]:
+def _recompute_bill_metrics(
+    summary_path: Path, categorized_path: Path
+) -> tuple[dict[str, float], list[dict[str, Any]]]:
     if _csv_has_header(categorized_path):
         return _read_category_summary_from_categorized(categorized_path)
     if _csv_has_header(summary_path):
@@ -355,7 +363,9 @@ def _validate_final_outputs(summary_path: Path, categorized_path: Path) -> None:
         raise ValueError("finalize outputs incomplete: " + "; ".join(details))
 
 
-def _rows(conn: sqlite3.Connection, sql: str, args: Iterable[Any] = ()) -> list[sqlite3.Row]:
+def _rows(
+    conn: _CompatConnection, sql: str, args: Iterable[Any] = ()
+) -> list[dict[str, Any]]:
     cur = conn.execute(sql, tuple(args))
     return list(cur.fetchall())
 
@@ -426,7 +436,9 @@ def load_profile(root: Path, profile_id: str) -> dict[str, Any]:
         resolved_outputs, summary_path, categorized_path = _resolve_bill_outputs(
             root, str(b["run_id"] or "").strip(), outputs
         )
-        totals, category_summary = _recompute_bill_metrics(summary_path, categorized_path)
+        totals, category_summary = _recompute_bill_metrics(
+            summary_path, categorized_path
+        )
         out_bills.append(
             {
                 "run_id": b["run_id"],
@@ -456,16 +468,24 @@ def load_profile(root: Path, profile_id: str) -> dict[str, Any]:
     }
 
 
-def update_profile(root: Path, profile_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+def update_profile(
+    root: Path, profile_id: str, updates: dict[str, Any]
+) -> dict[str, Any]:
     with _connect(root) as conn:
         _init_db(conn)
-        row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
         if not row:
             raise FileNotFoundError(profile_id)
         if "name" in updates:
             conn.execute(
                 "UPDATE profiles SET name = ?, updated_at = ? WHERE id = ?",
-                (str(updates.get("name") or "").strip()[:80], utc_now_iso(), profile_id),
+                (
+                    str(updates.get("name") or "").strip()[:80],
+                    utc_now_iso(),
+                    profile_id,
+                ),
             )
     return load_profile(root, profile_id)
 
@@ -479,7 +499,7 @@ def _ensure_run_exists(root: Path, run_id: str) -> None:
         raise FileNotFoundError(f"run not found: {run_id}")
 
 
-def _bill_owner_profile_id(conn: sqlite3.Connection, run_id: str) -> str:
+def _bill_owner_profile_id(conn: _CompatConnection, run_id: str) -> str:
     row = conn.execute(
         """
         SELECT profile_id
@@ -495,21 +515,9 @@ def _bill_owner_profile_id(conn: sqlite3.Connection, run_id: str) -> str:
     return str(row["profile_id"] or "").strip()
 
 
-def _legacy_state_profile_id(root: Path, run_id: str) -> str:
-    state_path = _run_state_path(root, run_id)
-    if not state_path.exists():
-        return ""
-    try:
-        state = load_json(state_path)
-    except Exception:
-        return ""
-    opts = state.get("options")
-    if not isinstance(opts, dict):
-        return ""
-    return str(opts.get("profile_id") or "").strip()
-
-
-def _upsert_run_binding_conn(conn: sqlite3.Connection, run_id: str, profile_id: str, now: str) -> None:
+def _upsert_run_binding_conn(
+    conn: _CompatConnection, run_id: str, profile_id: str, now: str
+) -> None:
     conn.execute(
         """
         INSERT INTO run_bindings(run_id, profile_id, created_at, updated_at)
@@ -522,7 +530,7 @@ def _upsert_run_binding_conn(conn: sqlite3.Connection, run_id: str, profile_id: 
     )
 
 
-def _binding_row(conn: sqlite3.Connection, run_id: str) -> sqlite3.Row | None:
+def _binding_row(conn: _CompatConnection, run_id: str) -> dict[str, Any] | None:
     return conn.execute(
         "SELECT run_id, profile_id, created_at, updated_at FROM run_bindings WHERE run_id = ?",
         (run_id,),
@@ -548,11 +556,9 @@ def get_run_binding(root: Path, run_id: str) -> dict[str, Any] | None:
 
         inferred_profile_id = _bill_owner_profile_id(conn, run_id)
         if not inferred_profile_id:
-            inferred_profile_id = _legacy_state_profile_id(root, run_id)
-        if not inferred_profile_id:
             return None
 
-        # lazy migration: if legacy state / bills has owner info, backfill to run_bindings.
+        # Lazy backfill: if bills has owner info, backfill to run_bindings.
         profile_row = conn.execute(
             "SELECT id FROM profiles WHERE id = ?",
             (inferred_profile_id,),
@@ -599,7 +605,9 @@ def set_run_binding(root: Path, run_id: str, profile_id: str) -> dict[str, Any]:
 
         bill_owner = _bill_owner_profile_id(conn, run_id)
         if bill_owner and bill_owner != profile_id:
-            raise ValueError(f"run {run_id} 已归档到用户 {bill_owner}，不可绑定到 {profile_id}")
+            raise ValueError(
+                f"run {run_id} 已归档到用户 {bill_owner}，不可绑定到 {profile_id}"
+            )
 
         now = utc_now_iso()
         _upsert_run_binding_conn(conn, run_id, profile_id, now)
@@ -639,14 +647,23 @@ def build_bill_from_run(root: Path, run_id: str) -> dict[str, Any]:
     _validate_final_outputs(summary_path, categorized_path)
 
     outputs = {
-        "summary_csv": safe_rel_path(root, summary_path) if summary_path.exists() else "",
-        "categorized_csv": safe_rel_path(root, categorized_path) if categorized_path.exists() else "",
+        "summary_csv": safe_rel_path(root, summary_path)
+        if summary_path.exists()
+        else "",
+        "categorized_csv": safe_rel_path(root, categorized_path)
+        if categorized_path.exists()
+        else "",
     }
 
-    period_start, period_end, period_label = _calc_period_range(year, month, period_mode, period_day)
+    period_start, period_end, period_label = _calc_period_range(
+        year, month, period_mode, period_day
+    )
     cross_month = False
     if period_start and period_end:
-        cross_month = (period_start.year, period_start.month) != (period_end.year, period_end.month)
+        cross_month = (period_start.year, period_start.month) != (
+            period_end.year,
+            period_end.month,
+        )
 
     bill = {
         "run_id": run_id,
@@ -668,7 +685,9 @@ def build_bill_from_run(root: Path, run_id: str) -> dict[str, Any]:
     return bill
 
 
-def _upsert_bill(conn: sqlite3.Connection, profile_id: str, bill: dict[str, Any]) -> None:
+def _upsert_bill(
+    conn: _CompatConnection, profile_id: str, bill: dict[str, Any]
+) -> None:
     conn.execute(
         """
         INSERT INTO bills(
@@ -708,7 +727,9 @@ def _upsert_bill(conn: sqlite3.Connection, profile_id: str, bill: dict[str, Any]
     )
 
 
-def _normalize_period_override(period_year: Any, period_month: Any) -> tuple[int | None, int | None]:
+def _normalize_period_override(
+    period_year: Any, period_month: Any
+) -> tuple[int | None, int | None]:
     year = _to_int(period_year)
     month = _to_int(period_month)
     if year is None and month is None:
@@ -722,7 +743,9 @@ def _normalize_period_override(period_year: Any, period_month: Any) -> tuple[int
     return year, month
 
 
-def _apply_period_override(bill: dict[str, Any], year: int | None, month: int | None) -> None:
+def _apply_period_override(
+    bill: dict[str, Any], year: int | None, month: int | None
+) -> None:
     if not year or not month:
         bill["year"] = None
         bill["month"] = None
@@ -743,11 +766,16 @@ def _apply_period_override(bill: dict[str, Any], year: int | None, month: int | 
     bill["period_end"] = period_end.isoformat() if period_end else ""
     bill["period_label"] = period_label
     bill["cross_month"] = bool(
-        period_start and period_end and (period_start.year, period_start.month) != (period_end.year, period_end.month)
+        period_start
+        and period_end
+        and (period_start.year, period_start.month)
+        != (period_end.year, period_end.month)
     )
 
 
-def _ensure_unique_period_binding(conn: sqlite3.Connection, profile_id: str, bill: dict[str, Any]) -> None:
+def _ensure_unique_period_binding(
+    conn: _CompatConnection, profile_id: str, bill: dict[str, Any]
+) -> None:
     year = _to_int(bill.get("year"))
     month = _to_int(bill.get("month"))
     run_id = str(bill.get("run_id") or "").strip()
@@ -763,7 +791,9 @@ def _ensure_unique_period_binding(conn: sqlite3.Connection, profile_id: str, bil
         (profile_id, year, month, run_id),
     ).fetchone()
     if row:
-        raise ValueError(f"账期 {year:04d}-{month:02d} 已绑定 run {row['run_id']}，同月不能绑定多个 run")
+        raise ValueError(
+            f"账期 {year:04d}-{month:02d} 已绑定 run {row['run_id']}，同月不能绑定多个 run"
+        )
 
 
 def add_bill_from_run(
@@ -783,7 +813,9 @@ def add_bill_from_run(
 
     with _connect(root) as conn:
         _init_db(conn)
-        row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
         if not row:
             raise FileNotFoundError(profile_id)
         binding_row = _binding_row(conn, run_id)
@@ -795,7 +827,9 @@ def add_bill_from_run(
                 )
         bill_owner = _bill_owner_profile_id(conn, run_id)
         if bill_owner and bill_owner != profile_id:
-            raise ValueError(f"run {run_id} 已归档到用户 {bill_owner}，不可归档到 {profile_id}")
+            raise ValueError(
+                f"run {run_id} 已归档到用户 {bill_owner}，不可归档到 {profile_id}"
+            )
         _ensure_unique_period_binding(conn, profile_id, bill)
         bill["updated_at"] = now
         if not bill.get("created_at"):
@@ -821,7 +855,9 @@ def remove_bills(
         raise ValueError("missing period_key or run_id")
     with _connect(root) as conn:
         _init_db(conn)
-        row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
         if not row:
             raise FileNotFoundError(profile_id)
         if period_key and run_id:
@@ -860,7 +896,9 @@ def reimport_bill(
 
     with _connect(root) as conn:
         _init_db(conn)
-        row = conn.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
         if not row:
             raise FileNotFoundError(profile_id)
         binding_row = _binding_row(conn, run_id)
@@ -872,7 +910,9 @@ def reimport_bill(
                 )
         bill_owner = _bill_owner_profile_id(conn, run_id)
         if bill_owner and bill_owner != profile_id:
-            raise ValueError(f"run {run_id} 已归档到用户 {bill_owner}，不可归档到 {profile_id}")
+            raise ValueError(
+                f"run {run_id} 已归档到用户 {bill_owner}，不可归档到 {profile_id}"
+            )
         conn.execute(
             "DELETE FROM bills WHERE profile_id = ? AND period_key = ?",
             (profile_id, period_key),
@@ -912,8 +952,16 @@ def check_profile_integrity(root: Path, profile_id: str) -> dict[str, Any]:
         outputs = bill.get("outputs") or {}
         summary_rel = str(outputs.get("summary_csv") or "")
         categorized_rel = str(outputs.get("categorized_csv") or "")
-        summary_path = (root / summary_rel) if summary_rel else run_dir / "output" / "category.summary.csv"
-        categorized_path = (root / categorized_rel) if categorized_rel else run_dir / "output" / "unified.transactions.categorized.csv"
+        summary_path = (
+            (root / summary_rel)
+            if summary_rel
+            else run_dir / "output" / "category.summary.csv"
+        )
+        categorized_path = (
+            (root / categorized_rel)
+            if categorized_rel
+            else run_dir / "output" / "unified.transactions.categorized.csv"
+        )
 
         if not summary_path.exists():
             issues.append(

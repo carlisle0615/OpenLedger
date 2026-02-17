@@ -10,10 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .config import resolve_global_classifier_config
-from .logger import get_logger
-from .profiles import add_bill_from_run, get_run_binding_profile_id
-from .stage_contracts import (
+from openledger.config import resolve_global_classifier_config
+from openledger.logger import get_logger
+from openledger.infrastructure.persistence.sqla.profile_store import (
+    add_bill_from_run,
+    get_run_binding_profile_id,
+)
+from openledger.stage_contracts import (
     ART_ALIPAY_NORMALIZED,
     ART_BANK_ENRICHED,
     ART_BANK_MATCH_DEBUG,
@@ -27,7 +30,7 @@ from .stage_contracts import (
     required_columns,
     table_columns,
 )
-from .state import (
+from openledger.state import (
     DEFAULT_STAGES,
     init_run_state,
     load_json,
@@ -75,14 +78,15 @@ def get_state(paths: Paths) -> dict[str, Any]:
     opts = state.get("options")
     if not isinstance(opts, dict):
         opts = {}
-    opts.setdefault("pdf_mode", "auto")
-    opts.setdefault("classify_mode", "llm")
-    opts.setdefault("period_mode", "billing")
-    opts.setdefault("period_day", 20)
-    opts.setdefault("period_year", None)
-    opts.setdefault("period_month", None)
-    opts.pop("profile_id", None)
-    state["options"] = opts
+    clean_opts = dict(opts)
+    clean_opts.setdefault("pdf_mode", "auto")
+    clean_opts.setdefault("classify_mode", "llm")
+    clean_opts.setdefault("period_mode", "billing")
+    clean_opts.setdefault("period_day", 20)
+    clean_opts.setdefault("period_year", None)
+    clean_opts.setdefault("period_month", None)
+    clean_opts = {k: v for k, v in clean_opts.items() if k != "profile_id"}
+    state["options"] = clean_opts
     return state
 
 
@@ -198,20 +202,32 @@ def _write_csv_header(path: Path, columns: list[str]) -> None:
 
 
 def _write_empty_credit_card_outputs(out_dir: Path) -> None:
-    _write_csv_header(out_dir / "credit_card.enriched.csv", table_columns(ART_CC_ENRICHED))
-    _write_csv_header(out_dir / "credit_card.unmatched.csv", table_columns(ART_CC_UNMATCHED))
-    _write_csv_header(out_dir / "credit_card.match_debug.csv", table_columns(ART_CC_MATCH_DEBUG))
+    _write_csv_header(
+        out_dir / "credit_card.enriched.csv", table_columns(ART_CC_ENRICHED)
+    )
+    _write_csv_header(
+        out_dir / "credit_card.unmatched.csv", table_columns(ART_CC_UNMATCHED)
+    )
+    _write_csv_header(
+        out_dir / "credit_card.match_debug.csv", table_columns(ART_CC_MATCH_DEBUG)
+    )
 
 
 def _write_empty_bank_outputs(out_dir: Path) -> None:
     _write_csv_header(out_dir / "bank.enriched.csv", table_columns(ART_BANK_ENRICHED))
     _write_csv_header(out_dir / "bank.unmatched.csv", table_columns(ART_BANK_UNMATCHED))
-    _write_csv_header(out_dir / "bank.match_debug.csv", table_columns(ART_BANK_MATCH_DEBUG))
+    _write_csv_header(
+        out_dir / "bank.match_debug.csv", table_columns(ART_BANK_MATCH_DEBUG)
+    )
 
 
 def _write_empty_export_outputs(out_dir: Path) -> None:
-    _write_csv_header(out_dir / "wechat.normalized.csv", table_columns(ART_WECHAT_NORMALIZED))
-    _write_csv_header(out_dir / "alipay.normalized.csv", table_columns(ART_ALIPAY_NORMALIZED))
+    _write_csv_header(
+        out_dir / "wechat.normalized.csv", table_columns(ART_WECHAT_NORMALIZED)
+    )
+    _write_csv_header(
+        out_dir / "alipay.normalized.csv", table_columns(ART_ALIPAY_NORMALIZED)
+    )
 
 
 def _run_cmd(
@@ -310,8 +326,6 @@ class WorkflowRunner:
             state_opts = {}
         # 允许显式传入 null 用于清空筛选条件等。
         state_opts.update(options)
-        # run 归属用户改为 DB SSOT，不再使用 options.profile_id。
-        state_opts.pop("profile_id", None)
         state["options"] = state_opts
         save_state(paths, state)
 
@@ -443,7 +457,9 @@ class WorkflowRunner:
             pdfs: list[Path] = inputs["pdfs"]
             if not pdfs:
                 raise RuntimeError("未上传 PDF 文件。")
-            pdf_mode = (str(options.get("pdf_mode") or "auto").strip() or "auto").lower()
+            pdf_mode = (
+                str(options.get("pdf_mode") or "auto").strip() or "auto"
+            ).lower()
             cmd = [
                 py,
                 "-u",
@@ -466,7 +482,9 @@ class WorkflowRunner:
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 with log_path.open("w", encoding="utf-8") as f:
                     f.write("[extract_exports] 缺少微信 xlsx 和支付宝 csv，已跳过。\n")
-                st_logger.warning("缺少微信 xlsx 和支付宝 csv，已跳过 extract_exports。")
+                st_logger.warning(
+                    "缺少微信 xlsx 和支付宝 csv，已跳过 extract_exports。"
+                )
                 return 0
             cmd = [
                 py,
@@ -481,9 +499,14 @@ class WorkflowRunner:
             if alipay:
                 cmd.extend(["--alipay", str(alipay)])
             st_logger.info(f"日志文件: {log_path}")
-            exit_code = _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
+            exit_code = _run_cmd(
+                cmd, cwd=root, log_path=log_path, env=env, logger=st_logger
+            )
             # 确保下游阶段始终能读取到标准化 CSV（即使导出文件缺失/解析失败）。
-            if not (paths.out_dir / "wechat.normalized.csv").exists() or not (paths.out_dir / "alipay.normalized.csv").exists():
+            if (
+                not (paths.out_dir / "wechat.normalized.csv").exists()
+                or not (paths.out_dir / "alipay.normalized.csv").exists()
+            ):
                 _write_empty_export_outputs(paths.out_dir)
             return exit_code
 
@@ -567,16 +590,18 @@ class WorkflowRunner:
             if period_year and period_month:
                 period_mode = options.get("period_mode") or "billing"
                 period_day = options.get("period_day") or 20
-                cmd.extend([
-                    "--period-year",
-                    str(period_year),
-                    "--period-month",
-                    str(period_month),
-                    "--period-day",
-                    str(period_day),
-                    "--period-mode",
-                    str(period_mode),
-                ])
+                cmd.extend(
+                    [
+                        "--period-year",
+                        str(period_year),
+                        "--period-month",
+                        str(period_month),
+                        "--period-day",
+                        str(period_day),
+                        "--period-mode",
+                        str(period_mode),
+                    ]
+                )
             st_logger.info(f"日志文件: {log_path}")
             return _run_cmd(cmd, cwd=root, log_path=log_path, env=env, logger=st_logger)
 

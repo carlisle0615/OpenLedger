@@ -18,11 +18,20 @@ It does not call any bank/payment provider APIs directly; it processes user-expo
 
 ### Backend
 
-- `openledger/server.py`: FastAPI service (typed request/response models via Pydantic).
-- `openledger/workflow.py`: run orchestration and stage execution.
-- `openledger/profiles.py`: profile/bill/run-binding domain logic (SQLite-backed).
-- `openledger/profile_review.py`: real-time period review aggregation and anomaly detection.
-- `openledger/capabilities.py`: source support and parser health aggregation.
+- Entry point:
+  - `openledger/server.py` (thin wrapper)
+  - `openledger/api/app.py` (FastAPI app composition, middleware, error handlers)
+- Layered packages:
+  - `openledger/api/`: routers + request/response schemas (`/api/v2/*`)
+  - `openledger/application/services/`: orchestration and use-case services
+  - `openledger/domain/`: domain models, enums, ports, errors
+  - `openledger/infrastructure/`: file storage adapters, workflow executor, SQLAlchemy persistence
+  - `openledger/observability/`: request context and logging facade
+- Core domain services:
+  - `openledger/infrastructure/workflow/runtime.py`: run orchestration and stage execution
+  - `openledger/infrastructure/persistence/sqlalchemy/profile_store.py`: profile/bill/run-binding domain logic (SQLAlchemy-backed SQLite)
+  - `openledger/application/services/review_engine.py`: real-time period review aggregation and anomaly detection
+  - `openledger/application/services/capabilities_core.py`: source support and parser health aggregation
 
 ### Stages
 
@@ -100,48 +109,55 @@ Priority (high -> low):
 
 ## Backend HTTP API (High Level)
 
+All API routes are versioned under `/api/v2`.
+JSON responses use a unified envelope: success `{ "data": ..., "meta": { "request_id": "..." } }`;
+errors `{ "error": { "code": "...", "message": "...", "details": ... }, "request_id": "..." }`.
+
 ### Run lifecycle and artifacts
 
-- `GET /api/runs`
-- `POST /api/runs`
-- `GET /api/runs/{run_id}`
-- `POST /api/runs/{run_id}/upload`
-- `POST /api/runs/{run_id}/start`
-- `POST /api/runs/{run_id}/cancel`
-- `POST /api/runs/{run_id}/reset`
-- `GET /api/runs/{run_id}/artifacts`
-- `GET /api/runs/{run_id}/artifact`
-- `GET /api/runs/{run_id}/preview`
-- `GET /api/runs/{run_id}/preview/pdf/meta`
-- `GET /api/runs/{run_id}/preview/pdf/page`
-- `GET /api/runs/{run_id}/logs/{stage_id}`
-- `GET /api/runs/{run_id}/stages/{stage_id}/io`
-- `GET /api/runs/{run_id}/stats/match`
+- `GET /api/v2/runs`
+- `POST /api/v2/runs`
+- `GET /api/v2/runs/{run_id}`
+- `POST /api/v2/runs/{run_id}/files`
+- `POST /api/v2/runs/{run_id}/commands/start`
+- `POST /api/v2/runs/{run_id}/commands/cancel`
+- `POST /api/v2/runs/{run_id}/commands/reset`
+- `GET /api/v2/runs/{run_id}/artifacts`
+- `GET /api/v2/runs/{run_id}/artifact`
+- `GET /api/v2/runs/{run_id}/preview/table`
+- `GET /api/v2/runs/{run_id}/preview/pdf/meta`
+- `GET /api/v2/runs/{run_id}/preview/pdf/page`
+- `GET /api/v2/runs/{run_id}/stages/{stage_id}/log`
+- `GET /api/v2/runs/{run_id}/stages/{stage_id}/io`
+- `GET /api/v2/runs/{run_id}/stats/match`
+- `POST /api/v2/runs/{run_id}/review/updates`
+- `PUT /api/v2/runs/{run_id}/options`
 
 ### Profiles and period archive
 
-- `GET /api/profiles`
-- `POST /api/profiles`
-- `GET /api/profiles/{profile_id}`
-- `PUT /api/profiles/{profile_id}`
-- `GET /api/profiles/{profile_id}/check`
-- `GET /api/profiles/{profile_id}/review`
-- `POST /api/profiles/{profile_id}/bills`
-- `POST /api/profiles/{profile_id}/bills/remove`
-- `POST /api/profiles/{profile_id}/bills/reimport`
-- `GET /api/runs/{run_id}/profile-binding`
-- `PUT /api/runs/{run_id}/profile-binding`
+- `GET /api/v2/profiles`
+- `POST /api/v2/profiles`
+- `GET /api/v2/profiles/{profile_id}`
+- `PUT /api/v2/profiles/{profile_id}`
+- `GET /api/v2/profiles/{profile_id}/check`
+- `GET /api/v2/profiles/{profile_id}/review`
+- `POST /api/v2/profiles/{profile_id}/bills`
+- `POST /api/v2/profiles/{profile_id}/bills/remove`
+- `POST /api/v2/profiles/{profile_id}/bills/reimport`
+- `GET /api/v2/runs/{run_id}/profile-binding`
+- `PUT /api/v2/runs/{run_id}/profile-binding`
 
 ### Capability and config
 
-- `GET /api/sources/support`
-- `GET /api/parsers/pdf`
-- `GET /api/parsers/pdf/health`
-- `GET /api/capabilities`
-- `GET /api/config/classifier`
-- `PUT /api/config/classifier`
-- `GET /api/runs/{run_id}/config/classifier`
-- `PUT /api/runs/{run_id}/config/classifier`
+- `GET /api/v2/health`
+- `GET /api/v2/sources/support`
+- `GET /api/v2/parsers/pdf`
+- `GET /api/v2/parsers/pdf/health`
+- `GET /api/v2/capabilities`
+- `GET /api/v2/config/classifier`
+- `PUT /api/v2/config/classifier`
+- `GET /api/v2/runs/{run_id}/config/classifier`
+- `PUT /api/v2/runs/{run_id}/config/classifier`
 
 ## Security / Privacy Boundaries
 

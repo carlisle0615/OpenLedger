@@ -47,7 +47,6 @@ uv run python -m unittest discover -s tests
 
 为“数据源支持矩阵”和“解析器健康状态”提供的 API：
 
-- `GET /api/sources/support`
-- `GET /api/parsers/pdf/health`
-- `GET /api/capabilities`（聚合输出）
-
+- `GET /api/v2/sources/support`
+- `GET /api/v2/parsers/pdf/health`
+- `GET /api/v2/capabilities`（聚合输出）

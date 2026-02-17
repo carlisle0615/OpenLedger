@@ -8,6 +8,7 @@ authors = [{ name = "OpenLedger contributors" }]
 keywords = ["ledger", "accounting", "personal-finance", "wechat", "alipay", "cmb"]
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.16.5",
     "fastapi>=0.116.1",
     "loguru>=0.7.3",
     "openpyxl>=3.1.5",
@@ -17,6 +18,7 @@ dependencies = [
     "pypdf>=6.6.2",
     "python-dateutil>=2.9.0.post0",
     "rapidfuzz>=3.14.3",
+    "sqlalchemy>=2.0.43",
     "uvicorn>=0.35.0",
     "httpx>=0.28.1",
 ]

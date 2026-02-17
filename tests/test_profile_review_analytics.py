@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openledger.profile_review import build_profile_review
-from openledger.profiles import add_bill_from_run, create_profile
+from openledger.application.services.review_engine import build_profile_review
+from openledger.infrastructure.persistence.sqlalchemy.profile_store import add_bill_from_run, create_profile
 from openledger.server import create_app
 
 try:
@@ -406,9 +406,12 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
             profile_id = _prepare_profile(root)
             app = create_app(root)
             with TestClient(app) as client:
-                ok_resp = client.get(f"/api/profiles/{profile_id}/review", params={"months": 6})
+                ok_resp = client.get(f"/api/v2/profiles/{profile_id}/review", params={"months": 6})
                 self.assertEqual(ok_resp.status_code, 200)
-                payload = ok_resp.json()
+                envelope = ok_resp.json()
+                self.assertIn("data", envelope)
+                self.assertIn("meta", envelope)
+                payload = envelope["data"]
                 self.assertIn("scope", payload)
                 self.assertIn("overview", payload)
                 self.assertIn("monthly_points", payload)
@@ -419,10 +422,13 @@ class ProfileReviewAnalyticsTests(unittest.TestCase):
                 self.assertIn("expense_top_transactions", payload["monthly_points"][0])
                 self.assertIn("category_expense_breakdown", payload["monthly_points"][0])
 
-                not_found_resp = client.get("/api/profiles/not_exists/review")
+                not_found_resp = client.get("/api/v2/profiles/not_exists/review")
                 self.assertEqual(not_found_resp.status_code, 404)
+                not_found_payload = not_found_resp.json()
+                self.assertIn("error", not_found_payload)
+                self.assertIn("request_id", not_found_payload)
 
-                invalid_resp = client.get(f"/api/profiles/{profile_id}/review", params={"months": 4})
+                invalid_resp = client.get(f"/api/v2/profiles/{profile_id}/review", params={"months": 4})
                 self.assertEqual(invalid_resp.status_code, 422)
 
 

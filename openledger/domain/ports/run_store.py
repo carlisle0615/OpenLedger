@@ -1,0 +1,16 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Protocol
+
+
+class RunStorePort(Protocol):
+    def list_runs(self) -> list[str]: ...
+
+    def create_run(self) -> str: ...
+
+    def get_state(self, run_id: str) -> dict[str, Any]: ...
+
+    def save_state(self, run_id: str, state: dict[str, Any]) -> None: ...
+
+    def run_paths(self, run_id: str) -> Any: ...

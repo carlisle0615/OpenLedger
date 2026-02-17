@@ -243,7 +243,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
             for (let guard = 0; guard < 1000; guard += 1) {
                 const r = await api<CsvPreview>(
                     baseUrl,
-                    `/api/runs/${encodeURIComponent(runId)}/preview?path=${encodeURIComponent(path)}&limit=${limit}&offset=${offset}`,
+                    `/api/v2/runs/${encodeURIComponent(runId)}/preview/table?path=${encodeURIComponent(path)}&limit=${limit}&offset=${offset}`,
                 );
                 rows.push(...r.rows);
                 if (!r.has_more || r.next_offset == null) break;
@@ -367,7 +367,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
         setError("");
         setReviewFeedback(null);
         try {
-            await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/review/updates`, {
+            await api<{ ok: boolean }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/review/updates`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ updates }),
@@ -518,7 +518,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
             if (ruleSaveToConfig) {
                 if (!runCfg) throw new Error("缺少分类器配置，请先加载任务。");
                 const nextRunCfg = patchConfig(runCfg);
-                await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/config/classifier`, {
+                await api<{ ok: boolean }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/config/classifier`, {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(nextRunCfg),
@@ -528,7 +528,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
             }
 
             if (ruleSaveToGlobal) {
-                const globalCfg = await api<any>(baseUrl, "/api/config/classifier");
+                const globalCfg = await api<any>(baseUrl, "/api/v2/config/classifier");
                 let globalBase: any = globalCfg;
                 if (ruleAction === "categorize") {
                     const cats = Array.isArray(globalBase.categories) ? globalBase.categories : [];
@@ -540,7 +540,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
                     }
                 }
                 const nextGlobalCfg = patchConfig(globalBase);
-                await api<{ ok: boolean }>(baseUrl, "/api/config/classifier", {
+                await api<{ ok: boolean }>(baseUrl, "/api/v2/config/classifier", {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(nextGlobalCfg),
@@ -586,7 +586,7 @@ export function useReviewActions(deps: ReviewActionsDeps) {
                 preservedEdits[txnId] = nextPatch;
             }
 
-            await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/review/updates`, {
+            await api<{ ok: boolean }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/review/updates`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ updates }),

@@ -1,6 +1,6 @@
 import unittest
 
-from openledger.capabilities import (
+from openledger.application.services.capabilities_core import (
     get_capabilities_payload,
     get_pdf_parser_health,
     list_source_support_matrix,
@@ -40,4 +40,3 @@ class TestCapabilitiesPayload(unittest.TestCase):
         self.assertIn("pdf_parser_health", payload)
         self.assertIsInstance(payload["source_support_matrix"], list)
         self.assertIsInstance(payload["pdf_parser_health"], dict)
-

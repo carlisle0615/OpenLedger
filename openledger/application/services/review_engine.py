@@ -7,7 +7,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .profiles import check_profile_integrity, load_profile
+from openledger.infrastructure.persistence.sqla.profile_store import (
+    check_profile_integrity,
+    load_profile,
+)
 
 
 class _RawModel(BaseModel):
@@ -345,10 +348,14 @@ def _build_monthly_income_top_transactions(
         period_end = _parse_date(bill.period_end)
 
         try:
-            with csv_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+            with csv_path.open(
+                "r", encoding="utf-8", errors="replace", newline=""
+            ) as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    if _to_bool(row.get("ignored")) or _to_bool(row.get("final_ignored")):
+                    if _to_bool(row.get("ignored")) or _to_bool(
+                        row.get("final_ignored")
+                    ):
                         continue
                     amount = _to_float(row.get("amount"))
                     if amount <= 0:
@@ -365,19 +372,25 @@ def _build_monthly_income_top_transactions(
                         continue
 
                     category_id = (
-                        str(row.get("category_id") or row.get("final_category_id") or "")
+                        str(
+                            row.get("category_id") or row.get("final_category_id") or ""
+                        )
                         .strip()
                         .lower()
                         or "other"
                     )
                     category_name = (
-                        str(row.get("category_name") or row.get("category") or "").strip()
+                        str(
+                            row.get("category_name") or row.get("category") or ""
+                        ).strip()
                         or category_id
                     )
                     flow = str(row.get("flow") or "").strip().lower()
 
                     if flow == "transfer":
-                        bucket = "salary" if category_id == "salary_wages" else "transfer"
+                        bucket = (
+                            "salary" if category_id == "salary_wages" else "transfer"
+                        )
                     else:
                         bucket = _income_bucket(category_id, category_name)
 
@@ -443,10 +456,14 @@ def _build_monthly_expense_top_transactions(
         period_end = _parse_date(bill.period_end)
 
         try:
-            with csv_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+            with csv_path.open(
+                "r", encoding="utf-8", errors="replace", newline=""
+            ) as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    if _to_bool(row.get("ignored")) or _to_bool(row.get("final_ignored")):
+                    if _to_bool(row.get("ignored")) or _to_bool(
+                        row.get("final_ignored")
+                    ):
                         continue
 
                     amount = _to_float(row.get("amount"))
@@ -464,13 +481,17 @@ def _build_monthly_expense_top_transactions(
                         continue
 
                     category_id = (
-                        str(row.get("category_id") or row.get("final_category_id") or "")
+                        str(
+                            row.get("category_id") or row.get("final_category_id") or ""
+                        )
                         .strip()
                         .lower()
                         or "other"
                     )
                     category_name = (
-                        str(row.get("category_name") or row.get("category") or "").strip()
+                        str(
+                            row.get("category_name") or row.get("category") or ""
+                        ).strip()
                         or category_id
                     )
                     flow = str(row.get("flow") or "").strip().lower()
@@ -763,7 +784,9 @@ def build_profile_review(
                 "tx_count": int(item.tx_count),
                 "mom_expense_rate": mom_rate,
                 "yoy_expense_rate": yoy_rate,
-                "salary_income": _round2(float(income_detail.get("salary_income", 0.0))),
+                "salary_income": _round2(
+                    float(income_detail.get("salary_income", 0.0))
+                ),
                 "subsidy_income": _round2(
                     float(income_detail.get("subsidy_income", 0.0))
                 ),

@@ -51,7 +51,7 @@ export default function App() {
   // Load profiles on mount
   useEffect(() => {
     if (!baseUrl) return;
-    api<{ profiles: ProfileListItem[] }>(baseUrl, "/api/profiles")
+    api<{ profiles: ProfileListItem[] }>(baseUrl, "/api/v2/profiles")
       .then((res) => setProfiles(Array.isArray(res.profiles) ? res.profiles : []))
       .catch((err) => console.error("Failed to load profiles:", err));
   }, [baseUrl]);
@@ -72,7 +72,7 @@ export default function App() {
   const handleCreateProfile = async (name: string) => {
     if (!name.trim()) return;
     try {
-      const profile = await api<Profile>(baseUrl, "/api/profiles", {
+      const profile = await api<Profile>(baseUrl, "/api/v2/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),

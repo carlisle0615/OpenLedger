@@ -5,7 +5,7 @@ from pathlib import Path
 from openledger.parsers.pdf import list_pdf_modes
 from openledger.parsers.pdf.cmb import detect_kind_from_text
 from openledger.state import init_run_state
-from openledger.workflow import get_state, make_paths, save_state
+from openledger.infrastructure.workflow.runtime import get_state, make_paths, save_state
 
 
 class TestPdfParserRegistry(unittest.TestCase):
@@ -45,4 +45,3 @@ class TestPdfModeDefault(unittest.TestCase):
 
             loaded = get_state(paths)
             self.assertEqual(loaded["options"]["pdf_mode"], "auto")
-

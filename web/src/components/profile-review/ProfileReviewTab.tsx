@@ -83,7 +83,7 @@ export function ProfileReviewTab({
             }
 
             const query = params.toString();
-            const path = `/api/profiles/${encodeURIComponent(selectedProfileId)}/review${query ? `?${query}` : ""}`;
+            const path = `/api/v2/profiles/${encodeURIComponent(selectedProfileId)}/review${query ? `?${query}` : ""}`;
             const payload = await api<ProfileReviewResponse>(baseUrl, path);
             setData(payload);
         } catch (e) {

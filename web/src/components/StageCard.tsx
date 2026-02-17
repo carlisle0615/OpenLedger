@@ -113,7 +113,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile, runDisab
     useEffect(() => {
         if (!runId || !stage.id) return;
         let mounted = true;
-        api<StageIO>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/stages/${encodeURIComponent(stage.id)}/io`)
+        api<StageIO>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/stages/${encodeURIComponent(stage.id)}/io`)
             .then(d => { if (mounted) setIo(d); })
             .catch(() => { if (mounted) setIo(null); });
         return () => { mounted = false; };
@@ -126,7 +126,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile, runDisab
         }
         let mounted = true;
         setLoadingStats(true);
-        api<MatchStats>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/stats/match?stage=${encodeURIComponent(stage.id)}`)
+        api<MatchStats>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/stats/match?stage=${encodeURIComponent(stage.id)}`)
             .then(d => { if (mounted) setMatchStats(d); })
             .catch(() => { if (mounted) setMatchStats(null); })
             .finally(() => { if (mounted) setLoadingStats(false); });
@@ -137,7 +137,7 @@ export function StageCard({ stage, runId, baseUrl, onRun, onSelectFile, runDisab
         if (!runId) return;
         setLoadingLog(true);
         try {
-            const r = await api<{ text: string }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/logs/${encodeURIComponent(stage.id)}`);
+            const r = await api<{ text: string }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/stages/${encodeURIComponent(stage.id)}/log`);
             setLogText(r.text);
         } catch {
             setLogText("（日志加载失败）");

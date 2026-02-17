@@ -54,7 +54,7 @@ export function useRunApi(deps: RunApiDeps) {
         setBackendStatus("checking");
         setBackendError("");
         try {
-            const r = await api<{ runs: string[]; runs_meta?: RunMeta[] }>(baseUrl, "/api/runs");
+            const r = await api<{ runs: string[]; runs_meta?: RunMeta[] }>(baseUrl, "/api/v2/runs");
             setRuns(r.runs);
             setRunsMeta(Array.isArray(r.runs_meta) ? r.runs_meta : []);
             setBackendStatus("ok");
@@ -72,7 +72,7 @@ export function useRunApi(deps: RunApiDeps) {
 
     async function loadRun(id: string) {
         if (!id) return;
-        const s = await api<RunState>(baseUrl, `/api/runs/${encodeURIComponent(id)}`);
+        const s = await api<RunState>(baseUrl, `/api/v2/runs/${encodeURIComponent(id)}`);
         setState(s);
         setSelectedFile(null);
         setCsvPreview(null);
@@ -80,7 +80,7 @@ export function useRunApi(deps: RunApiDeps) {
         setTextPreview("");
         setPreviewError("");
         try {
-            const cfg = await api<ClassifierConfig>(baseUrl, `/api/runs/${encodeURIComponent(id)}/config/classifier`);
+            const cfg = await api<ClassifierConfig>(baseUrl, `/api/v2/runs/${encodeURIComponent(id)}/config/classifier`);
             setConfig(cfg);
             setConfigText(JSON.stringify(cfg, null, 2));
         } catch {
@@ -94,7 +94,7 @@ export function useRunApi(deps: RunApiDeps) {
         setError("");
         try {
             const name = newRunName.trim();
-            const s = await api<RunState>(baseUrl, "/api/runs", {
+            const s = await api<RunState>(baseUrl, "/api/v2/runs", {
                 method: "POST",
                 headers: name ? { "Content-Type": "application/json" } : undefined,
                 body: name ? JSON.stringify({ name }) : undefined,
@@ -119,7 +119,7 @@ export function useRunApi(deps: RunApiDeps) {
             for (const f of Array.from(files)) {
                 fd.append("files", f, f.name);
             }
-            await api<{ saved: unknown[] }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/upload`, {
+            await api<{ saved: unknown[] }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/files`, {
                 method: "POST",
                 body: fd,
             });
@@ -132,17 +132,17 @@ export function useRunApi(deps: RunApiDeps) {
     }
 
     function downloadHref(relPath: string) {
-        return `${baseUrl}/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(relPath)}`;
+        return `${baseUrl}/api/v2/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(relPath)}`;
     }
 
     function pdfPageHref(relPath: string, page: number, dpi = 120) {
-        return `${baseUrl}/api/runs/${encodeURIComponent(runId)}/preview/pdf/page?path=${encodeURIComponent(relPath)}&page=${encodeURIComponent(String(page))}&dpi=${encodeURIComponent(String(dpi))}`;
+        return `${baseUrl}/api/v2/runs/${encodeURIComponent(runId)}/preview/pdf/page?path=${encodeURIComponent(relPath)}&page=${encodeURIComponent(String(page))}&dpi=${encodeURIComponent(String(dpi))}`;
     }
 
     async function loadPdfMeta(relPath: string) {
         return api<PdfPreview>(
             baseUrl,
-            `/api/runs/${encodeURIComponent(runId)}/preview/pdf/meta?path=${encodeURIComponent(relPath)}`,
+            `/api/v2/runs/${encodeURIComponent(runId)}/preview/pdf/meta?path=${encodeURIComponent(relPath)}`,
         );
     }
 
@@ -170,7 +170,7 @@ export function useRunApi(deps: RunApiDeps) {
         setBusy(true);
         setError("");
         try {
-            await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/start`, {
+            await api<{ ok: boolean }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/commands/start`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ stages, options }),
@@ -195,7 +195,7 @@ export function useRunApi(deps: RunApiDeps) {
         setBusy(true);
         setError("");
         try {
-            await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+            await api<{ ok: boolean }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/commands/cancel`, { method: "POST" });
         } catch (e) {
             setError(String(e));
         } finally {
@@ -216,7 +216,7 @@ export function useRunApi(deps: RunApiDeps) {
         setBusy(true);
         setError("");
         try {
-            await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/reset`, {
+            await api<{ ok: boolean }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/commands/reset`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ scope: "classify" }),
@@ -233,7 +233,7 @@ export function useRunApi(deps: RunApiDeps) {
         setPreviewError("");
         const r = await api<CsvPreview>(
             baseUrl,
-            `/api/runs/${encodeURIComponent(runId)}/preview?path=${encodeURIComponent(relPath)}&limit=${encodeURIComponent(String(csvLimit))}&offset=${encodeURIComponent(String(offset))}`,
+            `/api/v2/runs/${encodeURIComponent(runId)}/preview/table?path=${encodeURIComponent(relPath)}&limit=${encodeURIComponent(String(csvLimit))}&offset=${encodeURIComponent(String(offset))}`,
         );
         setCsvPreview(r);
     }
@@ -292,14 +292,14 @@ export function useRunApi(deps: RunApiDeps) {
             setBusy(true);
             setError("");
             if (cfgSaveToRun) {
-                await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/config/classifier`, {
+                await api<{ ok: boolean }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/config/classifier`, {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(next),
                 });
             }
             if (cfgSaveToGlobal) {
-                await api<{ ok: boolean }>(baseUrl, "/api/config/classifier", {
+                await api<{ ok: boolean }>(baseUrl, "/api/v2/config/classifier", {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(next),
@@ -327,14 +327,13 @@ export function useRunApi(deps: RunApiDeps) {
         if (!runId) return;
         lastOptionEdit.current = Date.now();
         const nextUpdates = { ...(updates as Record<string, unknown>) };
-        delete nextUpdates.profile_id;
         if (!Object.keys(nextUpdates).length) return;
         // 乐观更新
         setState((prev) => (prev ? { ...prev, options: { ...prev.options, ...nextUpdates } } : prev));
         setBusy(true);
         setError("");
         try {
-            await api<{ ok: boolean }>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/options`, {
+            await api<{ ok: boolean }>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}/options`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(nextUpdates),
@@ -369,7 +368,7 @@ export function useRunApi(deps: RunApiDeps) {
         try {
             await api<{ ok: boolean; binding: unknown }>(
                 baseUrl,
-                `/api/runs/${encodeURIComponent(runId)}/profile-binding`,
+                `/api/v2/runs/${encodeURIComponent(runId)}/profile-binding`,
                 {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
@@ -401,7 +400,7 @@ export function useRunApi(deps: RunApiDeps) {
 
     // 加载 PDF 解析模式
     useEffect(() => {
-        api<{ modes: PdfMode[] }>(baseUrl, "/api/parsers/pdf")
+        api<{ modes: PdfMode[] }>(baseUrl, "/api/v2/parsers/pdf")
             .then((r) => setPdfModes(Array.isArray(r?.modes) ? r.modes : []))
             .catch(() => setPdfModes([{ id: "auto", name: "自动识别（推荐）" }]));
     }, [baseUrl]);
@@ -411,7 +410,7 @@ export function useRunApi(deps: RunApiDeps) {
         if (!runId) return;
         loadRun(runId).catch((e) => setError(String(e)));
         const timer = window.setInterval(() => {
-            api<RunState>(baseUrl, `/api/runs/${encodeURIComponent(runId)}`)
+            api<RunState>(baseUrl, `/api/v2/runs/${encodeURIComponent(runId)}`)
                 .then((s) => {
                     if (Date.now() - lastOptionEdit.current < 10000) {
                         setState((prev) => {
